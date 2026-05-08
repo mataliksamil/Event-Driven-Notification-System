@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS batches;
+DROP TYPE IF EXISTS batch_status;
