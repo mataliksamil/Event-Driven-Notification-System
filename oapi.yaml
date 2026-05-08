@@ -1,0 +1,215 @@
+openapi: 3.0.3
+info:
+  title: Notification Management API
+  description: Scalable API for dispatching and tracking notifications (SMS, Email, Push).
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local development server
+
+paths:
+  /notifications/batches:
+    post:
+      summary: Submit a batch of notifications
+      description: Accepts up to 1000 notifications for asynchronous processing.
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          schema:
+            type: string
+          required: true
+          description: UUID to prevent duplicate processing of the same batch.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchCreateRequest'
+      responses:
+        '202':
+          description: Batch accepted for processing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchResponse'
+        '400':
+          description: Bad request (e.g., batch size > 1000, missing fields)
+
+  /batches/{batchId}:
+    get:
+      summary: Query batch status
+      parameters:
+        - in: path
+          name: batchId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Batch status details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchResponse'
+
+  /notifications:
+    get:
+      summary: List notifications
+      description: Retrieve a paginated list of notifications with optional filtering.
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+        - in: query
+          name: channel
+          schema:
+            type: string
+        - in: query
+          name: start_date
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: end_date
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 50
+      responses:
+        '200':
+          description: A paginated list of notifications
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedNotificationList'
+
+  /notifications/{id}:
+    get:
+      summary: Query notification status by ID
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Notification details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+
+  /notifications/{id}/cancel:
+    post:
+      summary: Cancel a pending notification
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Notification cancelled successfully
+        '400':
+          description: Cannot cancel a notification that is already processing or delivered
+        '404':
+          description: Notification not found
+
+components:
+  schemas:
+    BatchCreateRequest:
+      type: object
+      required:
+        - notifications
+      properties:
+        notifications:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: '#/components/schemas/NotificationPayload'
+
+    NotificationPayload:
+      type: object
+      required:
+        - recipient
+        - channel
+        - content
+      properties:
+        recipient:
+          type: string
+          example: "+905551234567"
+        channel:
+          type: string
+          enum: [sms, email, push]
+        content:
+          type: string
+          maxLength: 1024
+        priority:
+          type: string
+          enum: [high, normal, low]
+          default: normal
+
+    Notification:
+      allOf:
+        - $ref: '#/components/schemas/NotificationPayload'
+        - type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+            batch_id:
+              type: string
+              format: uuid
+            status:
+              type: string
+              enum: [pending, processing, delivered, failed, cancelled]
+            created_at:
+              type: string
+              format: date-time
+
+    BatchResponse:
+      type: object
+      properties:
+        batch_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [accepted, processing, completed, partially_completed]
+        total_count:
+          type: integer
+        accepted_at:
+          type: string
+          format: date-time
+
+    PaginatedNotificationList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Notification'
+        meta:
+          type: object
+          properties:
+            total:
+              type: integer
+            page:
+              type: integer
+            limit:
+              type: integer
