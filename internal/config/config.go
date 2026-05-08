@@ -13,22 +13,31 @@ type Config struct {
 	DBPassword string
 	DBName     string
 	DBSSLMode  string
+	RedisHost  string
+	RedisPort  int
 	ServerPort string
 }
 
 func Load() (*Config, error) {
-	port, err := strconv.Atoi(envOr("DB_PORT", "5432"))
+	dbPort, err := strconv.Atoi(envOr("DB_PORT", "5432"))
 	if err != nil {
 		return nil, fmt.Errorf("invalid DB_PORT: %w", err)
 	}
 
+	redisPort, err := strconv.Atoi(envOr("REDIS_PORT", "6379"))
+	if err != nil {
+		return nil, fmt.Errorf("invalid REDIS_PORT: %w", err)
+	}
+
 	return &Config{
 		DBHost:     envOr("DB_HOST", "localhost"),
-		DBPort:     port,
+		DBPort:     dbPort,
 		DBUser:     envOr("DB_USER", "samil"),
 		DBPassword: envOr("DB_PASSWORD", "mysecretpassword"),
 		DBName:     envOr("DB_NAME", "myappdb"),
 		DBSSLMode:  envOr("DB_SSLMODE", "disable"),
+		RedisHost:  envOr("REDIS_HOST", "localhost"),
+		RedisPort:  redisPort,
 		ServerPort: envOr("SERVER_PORT", "8080"),
 	}, nil
 }
