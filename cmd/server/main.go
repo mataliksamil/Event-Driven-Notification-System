@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,9 +12,12 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/samil/notification/internal/adapter/batch"
 	"github.com/samil/notification/internal/config"
 	"github.com/samil/notification/internal/db"
 	"github.com/samil/notification/internal/migration"
+	redisSvc "github.com/samil/notification/internal/redis"
+	"github.com/samil/notification/internal/storage"
 )
 
 func main() {
@@ -34,11 +38,23 @@ func main() {
 	}
 	defer pool.Close()
 
+	redisClient, err := redisSvc.NewClient(ctx, cfg)
+	if err != nil {
+		log.Fatalf("connect redis: %v", err)
+	}
+	defer redisClient.Close()
+
+	repo := storage.NewPostgresRepository(pool)
+	idempotency := redisSvc.NewIdempotencyService(redisClient)
+
 	r := chi.NewRouter()
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	})
+
+	batchHandler := batch.NewHandler(repo, idempotency)
+	r.Mount("/notifications/batches", batchHandler.Routes())
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%s", cfg.ServerPort),
@@ -50,7 +66,7 @@ func main() {
 
 	go func() {
 		log.Printf("server listening on %s", srv.Addr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("server error: %v", err)
 		}
 	}()

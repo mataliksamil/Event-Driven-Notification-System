@@ -28,6 +28,14 @@ func (s *IdempotencyService) CheckAndSet(ctx context.Context, key string) (bool,
 	return ok, nil
 }
 
+func (s *IdempotencyService) Release(ctx context.Context, key string) error {
+	err := s.client.Del(ctx, s.redisKey(key)).Err()
+	if err != nil {
+		return fmt.Errorf("redis DEL: %w", err)
+	}
+	return nil
+}
+
 func (s *IdempotencyService) redisKey(key string) string {
 	return fmt.Sprintf("idempotency:%s", key)
 }
