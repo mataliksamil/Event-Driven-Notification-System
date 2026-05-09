@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -10,11 +11,12 @@ import (
 )
 
 type BatchService struct {
-	repo domain.NotificationRepository
+	repo     domain.NotificationRepository
+	producer domain.NotificationProducer
 }
 
-func NewBatchService(repo domain.NotificationRepository) *BatchService {
-	return &BatchService{repo: repo}
+func NewBatchService(repo domain.NotificationRepository, producer domain.NotificationProducer) *BatchService {
+	return &BatchService{repo: repo, producer: producer}
 }
 
 type NotificationInput struct {
@@ -51,6 +53,12 @@ func (s *BatchService) CreateBatch(ctx context.Context, idempotencyKey uuid.UUID
 
 	if err := s.repo.CreateBatch(ctx, batch, notifications); err != nil {
 		return nil, fmt.Errorf("create batch: %w", err)
+	}
+
+	for _, n := range notifications {
+		if err := s.producer.Enqueue(ctx, n); err != nil {
+			log.Printf("failed to enqueue notification %s: %v", n.ID, err)
+		}
 	}
 
 	return &BatchResult{

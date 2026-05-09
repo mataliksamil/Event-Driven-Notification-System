@@ -17,6 +17,7 @@ import (
 	"github.com/samil/notification/internal/config"
 	"github.com/samil/notification/internal/db"
 	"github.com/samil/notification/internal/migration"
+	"github.com/samil/notification/internal/producer"
 	redisSvc "github.com/samil/notification/internal/redis"
 	"github.com/samil/notification/internal/service"
 	"github.com/samil/notification/internal/storage"
@@ -51,10 +52,14 @@ func main() {
 	}
 	defer redisClient.Close()
 
+	asynqClient := producer.NewClient(cfg)
+	defer asynqClient.Close()
+
 	repo := storage.NewPostgresRepository(pool)
 	idempotency := redisSvc.NewIdempotencyService(redisClient)
+	prod := producer.NewProducer(asynqClient)
 
-	batchSvc := service.NewBatchService(repo)
+	batchSvc := service.NewBatchService(repo, prod)
 	batchHandler := batch.NewHandler(batchSvc)
 	idempotencyMW := middleware.NewIdempotency(idempotency)
 
