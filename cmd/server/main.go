@@ -18,6 +18,7 @@ import (
 	"github.com/samil/notification/internal/migration"
 	redisSvc "github.com/samil/notification/internal/redis"
 	"github.com/samil/notification/internal/storage"
+	"github.com/samil/notification/internal/swagger"
 )
 
 func main() {
@@ -30,6 +31,10 @@ func main() {
 
 	if err := migration.Run(cfg, "./migrations"); err != nil {
 		log.Fatalf("run migrations: %v", err)
+	}
+
+	if err := swagger.Load("./oapi.yaml"); err != nil {
+		log.Fatalf("load openapi spec: %v", err)
 	}
 
 	pool, err := db.NewPool(ctx, cfg)
@@ -53,8 +58,14 @@ func main() {
 		w.Write([]byte("ok"))
 	})
 
-	batchHandler := batch.NewHandler(repo, idempotency)
-	r.Mount("/notifications/batches", batchHandler.Routes())
+	r.Get("/swagger/spec.yaml", swagger.SpecHandler())
+	r.Get("/swagger", swagger.UIHandler())
+	r.Get("/swagger/", swagger.UIHandler())
+
+	r.Route("/api/v1", func(r chi.Router) {
+		batchHandler := batch.NewHandler(repo, idempotency)
+		r.Mount("/notifications/batches", batchHandler.Routes())
+	})
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%s", cfg.ServerPort),
