@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -11,40 +12,40 @@ import (
 	"github.com/samil/notification/internal/domain"
 )
 
-type ErrPermanentFailure struct {
+type RestError struct {
 	StatusCode int
-	Err        error
+	Message    string
 }
 
-func (e *ErrPermanentFailure) Error() string {
-	return fmt.Sprintf("permanent failure (status %d): %v", e.StatusCode, e.Err)
+func (e *RestError) Error() string {
+	return fmt.Sprintf("rest error (status %d): %s", e.StatusCode, e.Message)
 }
 
-func (e *ErrPermanentFailure) Unwrap() error {
-	return e.Err
+type ErrNetworkFailure struct {
+	Err error
 }
 
-type ErrTemporaryFailure struct {
-	StatusCode int
-	Err        error
+func (e *ErrNetworkFailure) Error() string {
+	return fmt.Sprintf("network failure: %v", e.Err)
 }
 
-func (e *ErrTemporaryFailure) Error() string {
-	return fmt.Sprintf("temporary failure (status %d): %v", e.StatusCode, e.Err)
-}
-
-func (e *ErrTemporaryFailure) Unwrap() error {
+func (e *ErrNetworkFailure) Unwrap() error {
 	return e.Err
 }
 
 func IsPermanentFailure(err error) bool {
-	_, ok := err.(*ErrPermanentFailure)
-	return ok
+	var restErr *RestError
+	return errors.As(err, &restErr) &&
+		restErr.StatusCode >= 400 && restErr.StatusCode < 500
 }
 
 func IsTemporaryFailure(err error) bool {
-	_, ok := err.(*ErrTemporaryFailure)
-	return ok
+	var restErr *RestError
+	if errors.As(err, &restErr) {
+		return restErr.StatusCode >= 500
+	}
+	var netErr *ErrNetworkFailure
+	return errors.As(err, &netErr)
 }
 
 type webhookPayload struct {
@@ -87,9 +88,7 @@ func (c *WebhookClient) Send(ctx context.Context, recipient string, channel doma
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return &ErrTemporaryFailure{
-			Err: fmt.Errorf("http request: %w", err),
-		}
+		return &ErrNetworkFailure{Err: fmt.Errorf("http request: %w", err)}
 	}
 	defer resp.Body.Close()
 
@@ -98,21 +97,21 @@ func (c *WebhookClient) Send(ctx context.Context, recipient string, channel doma
 	}
 
 	if resp.StatusCode >= 400 && resp.StatusCode < 500 {
-		return &ErrPermanentFailure{
+		return &RestError{
 			StatusCode: resp.StatusCode,
-			Err:        fmt.Errorf("client error: %s", resp.Status),
+			Message:    resp.Status,
 		}
 	}
 
 	if resp.StatusCode >= 500 {
-		return &ErrTemporaryFailure{
+		return &RestError{
 			StatusCode: resp.StatusCode,
-			Err:        fmt.Errorf("server error: %s", resp.Status),
+			Message:    resp.Status,
 		}
 	}
 
-	return &ErrTemporaryFailure{
+	return &RestError{
 		StatusCode: resp.StatusCode,
-		Err:        fmt.Errorf("unexpected status: %s", resp.Status),
+		Message:    fmt.Sprintf("unexpected status: %s", resp.Status),
 	}
 }

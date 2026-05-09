@@ -22,7 +22,9 @@ type Notification struct {
 	Channel   Channel
 	Content   string
 	Priority  Priority
-	Status    NotificationStatus
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	Status      NotificationStatus
+	ErrorMessage *string
+	RetryCount  int
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }

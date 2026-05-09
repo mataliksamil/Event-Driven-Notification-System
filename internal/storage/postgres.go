@@ -60,6 +60,36 @@ func (r *PostgresRepository) CreateBatch(ctx context.Context, batch *domain.Batc
 	return nil
 }
 
+func (r *PostgresRepository) GetNotificationByID(ctx context.Context, id uuid.UUID) (*domain.Notification, error) {
+	var n domain.Notification
+	var channel, priority, status string
+
+	err := r.pool.QueryRow(ctx,
+		`SELECT id, batch_id, recipient, channel, content, priority, status, error_message, retry_count, created_at, updated_at
+		 FROM notifications WHERE id = $1`,
+		id,
+	).Scan(&n.ID, &n.BatchID, &n.Recipient, &channel, &n.Content, &priority, &status, &n.ErrorMessage, &n.RetryCount, &n.CreatedAt, &n.UpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("query notification by id: %w", err)
+	}
+
+	n.Channel = domain.Channel(channel)
+	n.Priority = domain.Priority(priority)
+	n.Status = domain.NotificationStatus(status)
+	return &n, nil
+}
+
+func (r *PostgresRepository) UpdateNotificationStatus(ctx context.Context, id uuid.UUID, status domain.NotificationStatus, errMsg *string, retryCount int) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE notifications SET status = $2, error_message = $3, retry_count = $4, updated_at = NOW() WHERE id = $1`,
+		id, string(status), errMsg, retryCount,
+	)
+	if err != nil {
+		return fmt.Errorf("update notification status: %w", err)
+	}
+	return nil
+}
+
 func (r *PostgresRepository) GetBatchByIdempotencyKey(ctx context.Context, key uuid.UUID) (*domain.Batch, error) {
 	var b domain.Batch
 	var status string
