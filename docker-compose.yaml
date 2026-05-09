@@ -45,6 +45,48 @@ services:
     depends_on:
       - redis
 
+  # --- Server ---
+  server:
+    build: .
+    command: ["./server"]
+    container_name: notification_server
+    ports:
+      - "8080:8080"
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: samil
+      DB_PASSWORD: mysecretpassword
+      DB_NAME: myappdb
+      DB_SSLMODE: disable
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      SERVER_PORT: "8080"
+      WEBHOOK_URL: https://webhook.site/4b9f3602-73b6-44e5-8751-dfa02509efd1
+    depends_on:
+      - db
+      - redis
+
+  # --- Worker ---
+  worker:
+    build: .
+    command: ["./worker"]
+    container_name: notification_worker
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: samil
+      DB_PASSWORD: mysecretpassword
+      DB_NAME: myappdb
+      DB_SSLMODE: disable
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      WEBHOOK_URL: https://webhook.site/4b9f3602-73b6-44e5-8751-dfa02509efd1
+      WORKER_CONCURRENCY: 20
+    depends_on:
+      - db
+      - redis
+
 volumes:
   postgres_data:
   redis_data:
