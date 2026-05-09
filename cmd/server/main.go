@@ -13,10 +13,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/samil/notification/internal/adapter/batch"
+	"github.com/samil/notification/internal/adapter/middleware"
 	"github.com/samil/notification/internal/config"
 	"github.com/samil/notification/internal/db"
 	"github.com/samil/notification/internal/migration"
 	redisSvc "github.com/samil/notification/internal/redis"
+	"github.com/samil/notification/internal/service"
 	"github.com/samil/notification/internal/storage"
 	"github.com/samil/notification/internal/swagger"
 )
@@ -52,6 +54,10 @@ func main() {
 	repo := storage.NewPostgresRepository(pool)
 	idempotency := redisSvc.NewIdempotencyService(redisClient)
 
+	batchSvc := service.NewBatchService(repo)
+	batchHandler := batch.NewHandler(batchSvc)
+	idempotencyMW := middleware.NewIdempotency(idempotency)
+
 	r := chi.NewRouter()
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -63,8 +69,7 @@ func main() {
 	r.Get("/swagger/", swagger.UIHandler())
 
 	r.Route("/api/v1", func(r chi.Router) {
-		batchHandler := batch.NewHandler(repo, idempotency)
-		r.Mount("/notifications/batches", batchHandler.Routes())
+		r.With(idempotencyMW.Handle).Mount("/notifications/batches", batchHandler.Routes())
 	})
 
 	srv := &http.Server{
