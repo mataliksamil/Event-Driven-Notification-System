@@ -16,6 +16,7 @@ type Config struct {
 	RedisHost  string
 	RedisPort  int
 	ServerPort string
+	WebhookURL string
 }
 
 func Load() (*Config, error) {
@@ -39,6 +40,7 @@ func Load() (*Config, error) {
 		RedisHost:  envOr("REDIS_HOST", "localhost"),
 		RedisPort:  redisPort,
 		ServerPort: envOr("SERVER_PORT", "8080"),
+		WebhookURL: envOr("WEBHOOK_URL", ""),
 	}, nil
 }
 
