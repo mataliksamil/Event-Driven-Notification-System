@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/samil/notification/internal/adapter/middleware"
 	"github.com/samil/notification/internal/domain"
 	"github.com/samil/notification/internal/logger"
 	"github.com/samil/notification/internal/metrics"
@@ -102,6 +103,10 @@ func (c *WebhookClient) Send(ctx context.Context, recipient string, channel doma
 		return fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+
+	if correlationID := middleware.CorrelationIDFromContext(ctx); correlationID != "" {
+		req.Header.Set(middleware.HeaderCorrelationID, correlationID)
+	}
 
 	log.Info("sending webhook request", "method", req.Method, "url", c.webhookURL)
 

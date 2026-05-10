@@ -3,10 +3,10 @@ package service
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/samil/notification/internal/domain"
+	"github.com/samil/notification/internal/logger"
 )
 
 type NotificationService struct {
@@ -48,7 +48,7 @@ type ListResult struct {
 }
 
 func (s *NotificationService) GetNotification(ctx context.Context, id uuid.UUID) (*NotificationResult, error) {
-	log := slog.With("component", "notification_service", "notification_id", id)
+	log := logger.FromContext(ctx).With("component", "notification_service", "notification_id", id)
 
 	n, err := s.repo.GetNotificationByID(ctx, id)
 	if err != nil {
@@ -75,7 +75,7 @@ func (s *NotificationService) GetNotification(ctx context.Context, id uuid.UUID)
 }
 
 func (s *NotificationService) GetBatch(ctx context.Context, batchID uuid.UUID) (*BatchQueryResult, error) {
-	log := slog.With("component", "notification_service", "batch_id", batchID)
+	log := logger.FromContext(ctx).With("component", "notification_service", "batch_id", batchID)
 
 	b, err := s.repo.GetBatchByID(ctx, batchID)
 	if err != nil {
@@ -97,7 +97,7 @@ func (s *NotificationService) GetBatch(ctx context.Context, batchID uuid.UUID) (
 }
 
 func (s *NotificationService) ListNotifications(ctx context.Context, filter domain.NotificationFilter) (*ListResult, error) {
-	log := slog.With("component", "notification_service")
+	log := logger.FromContext(ctx).With("component", "notification_service")
 
 	notifications, total, err := s.repo.ListNotifications(ctx, filter)
 	if err != nil {
@@ -131,7 +131,7 @@ func (s *NotificationService) ListNotifications(ctx context.Context, filter doma
 }
 
 func (s *NotificationService) CancelNotification(ctx context.Context, id uuid.UUID) error {
-	log := slog.With("component", "notification_service", "notification_id", id)
+	log := logger.FromContext(ctx).With("component", "notification_service", "notification_id", id)
 
 	err := s.repo.CancelNotification(ctx, id)
 	if err != nil {

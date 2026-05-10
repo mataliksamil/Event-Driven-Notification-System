@@ -47,6 +47,11 @@ func (p *NotificationProcessor) ProcessTask(ctx context.Context, t *asynq.Task) 
 	log := slog.With("task_type", t.Type(), "notification_id", payload.NotificationID)
 	ctx = logger.WithAttrs(ctx, "notification_id", payload.NotificationID, "task_type", t.Type())
 
+	if payload.CorrelationID != "" {
+		ctx = logger.WithAttrs(ctx, "correlation_id", payload.CorrelationID)
+		log = log.With("correlation_id", payload.CorrelationID)
+	}
+
 	notification, err := p.repo.GetNotificationByID(ctx, payload.NotificationID)
 	if err != nil {
 		log.Error("failed to fetch notification", "error", err)

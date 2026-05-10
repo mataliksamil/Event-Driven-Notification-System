@@ -74,9 +74,11 @@ func main() {
 	batchHandler := batch.NewHandler(batchSvc, notificationSvc)
 	notificationHandler := notificationAdapter.NewHandler(notificationSvc)
 	idempotencyMW := middleware.NewIdempotency(idempotency)
+	correlationMW := middleware.NewCorrelation()
 	requestLogger := middleware.NewRequestLogger()
 
 	r := chi.NewRouter()
+	r.Use(correlationMW.Handler)
 	r.Use(requestLogger.Handler)
 	r.Get("/metrics", metrics.Handler().ServeHTTP)
 

@@ -3,11 +3,11 @@ package service
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/samil/notification/internal/domain"
+	"github.com/samil/notification/internal/logger"
 	"github.com/samil/notification/internal/metrics"
 )
 
@@ -38,7 +38,7 @@ func (s *BatchService) CreateBatch(ctx context.Context, idempotencyKey uuid.UUID
 	batchID := uuid.New()
 	now := time.Now().UTC()
 
-	log := slog.With("component", "batch_service", "batch_id", batchID, "idempotency_key", idempotencyKey, "notification_count", len(inputs))
+	log := logger.FromContext(ctx).With("component", "batch_service", "batch_id", batchID, "idempotency_key", idempotencyKey, "notification_count", len(inputs))
 	log.Info("creating batch")
 
 	notifications, err := buildNotifications(batchID, now, inputs)

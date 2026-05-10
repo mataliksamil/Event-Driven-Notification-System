@@ -1,9 +1,10 @@
 package middleware
 
 import (
-	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/samil/notification/internal/logger"
 )
 
 type RequestLogger struct{}
@@ -19,8 +20,7 @@ func (rl *RequestLogger) Handler(next http.Handler) http.Handler {
 
 		next.ServeHTTP(rec, r)
 
-		slog.Info("http request",
-			"component", "http_server",
+		logger.FromContext(r.Context()).Info("http request",
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", rec.statusCode,

@@ -3,11 +3,12 @@ package producer
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
+	"github.com/samil/notification/internal/adapter/middleware"
 	"github.com/samil/notification/internal/domain"
+	"github.com/samil/notification/internal/logger"
 	"github.com/samil/notification/internal/worker"
 )
 
@@ -20,14 +21,16 @@ func NewProducer(client *asynq.Client) *Producer {
 }
 
 func (p *Producer) Enqueue(ctx context.Context, notification *domain.Notification) error {
-	task, err := channelToTask(notification.Channel, notification.ID)
+	correlationID := middleware.CorrelationIDFromContext(ctx)
+
+	task, err := channelToTask(notification.Channel, notification.ID, correlationID)
 	if err != nil {
 		return err
 	}
 
 	queueName := priorityToQueue(notification.Priority)
 
-	log := slog.With(
+	log := logger.FromContext(ctx).With(
 		"component", "producer",
 		"notification_id", notification.ID,
 		"channel", notification.Channel,
@@ -56,14 +59,14 @@ func priorityToQueue(p domain.Priority) string {
 	}
 }
 
-func channelToTask(ch domain.Channel, id uuid.UUID) (*asynq.Task, error) {
+func channelToTask(ch domain.Channel, id uuid.UUID, correlationID string) (*asynq.Task, error) {
 	switch ch {
 	case domain.ChannelSMS:
-		return worker.NewTaskSMS(id)
+		return worker.NewTaskSMS(id, correlationID)
 	case domain.ChannelEmail:
-		return worker.NewTaskEmail(id)
+		return worker.NewTaskEmail(id, correlationID)
 	case domain.ChannelPush:
-		return worker.NewTaskPush(id)
+		return worker.NewTaskPush(id, correlationID)
 	default:
 		return nil, fmt.Errorf("unknown channel: %s", ch)
 	}
