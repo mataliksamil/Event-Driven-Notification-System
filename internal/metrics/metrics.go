@@ -76,6 +76,16 @@ var (
 		Name: "idempotency_cache_total",
 		Help: "Total idempotency lookups by result",
 	}, []string{"result"})
+
+	WorkerActiveTasks = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "worker_active_tasks",
+		Help: "Number of worker goroutines currently processing tasks",
+	}, []string{"channel"})
+
+	WorkerConcurrency = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "worker_concurrency",
+		Help: "Configured maximum worker concurrency",
+	})
 )
 
 func Handler() http.Handler {

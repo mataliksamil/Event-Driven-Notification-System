@@ -18,14 +18,14 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "k6_vus{job=\"k6\"}",
-          "legendFormat": "{{scenario}}",
+          "expr": "k6_vus",
+          "legendFormat": "VUs",
           "refId": "A"
         }
       ]
     },
     {
-      "title": "k6 - Request Duration (p50/p95/p99)",
+      "title": "k6 - Request Duration (p99)",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
       "fieldConfig": {
@@ -35,19 +35,9 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "histogram_quantile(0.5, rate(k6_http_req_duration_seconds_bucket{job=\"k6\"}[1m])) * 1000",
-          "legendFormat": "p50",
+          "expr": "k6_http_req_duration_p99 * 1000",
+          "legendFormat": "{{phase}} p99",
           "refId": "A"
-        },
-        {
-          "expr": "histogram_quantile(0.95, rate(k6_http_req_duration_seconds_bucket{job=\"k6\"}[1m])) * 1000",
-          "legendFormat": "p95",
-          "refId": "B"
-        },
-        {
-          "expr": "histogram_quantile(0.99, rate(k6_http_req_duration_seconds_bucket{job=\"k6\"}[1m])) * 1000",
-          "legendFormat": "p99",
-          "refId": "C"
         }
       ]
     },
@@ -62,8 +52,8 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "rate(k6_http_reqs_total{job=\"k6\"}[1m])",
-          "legendFormat": "{{name}}",
+          "expr": "rate(k6_http_reqs_total[1m])",
+          "legendFormat": "{{phase}}",
           "refId": "A"
         }
       ]
@@ -79,8 +69,8 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "rate(k6_http_reqs_total{job=\"k6\", expected_response=\"false\"}[1m]) / rate(k6_http_reqs_total{job=\"k6\"}[1m])",
-          "legendFormat": "error rate",
+          "expr": "k6_http_req_failed_rate",
+          "legendFormat": "{{phase}}",
           "refId": "A"
         }
       ]
@@ -96,37 +86,25 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "rate(k6_iterations_total{job=\"k6\"}[1m])",
-          "legendFormat": "{{scenario}}",
+          "expr": "rate(k6_iterations_total[1m])",
+          "legendFormat": "{{phase}}",
           "refId": "A"
         }
       ]
     },
     {
-      "title": "k6 - Checks Pass Rate",
-      "type": "gauge",
+      "title": "k6 - Checks Rate",
+      "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
       "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "value": null, "color": "red" },
-              { "value": 0.95, "color": "yellow" },
-              { "value": 0.99, "color": "green" }
-            ]
-          },
-          "min": 0,
-          "max": 1
-        },
+        "defaults": { "unit": "ops/s" },
         "overrides": []
       },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "rate(k6_checks_total{job=\"k6\", result=\"pass\"}[1m]) / rate(k6_checks_total{job=\"k6\"}[1m])",
-          "legendFormat": "pass rate",
+          "expr": "k6_checks_rate",
+          "legendFormat": "{{check}} ({{phase}})",
           "refId": "A"
         }
       ]
@@ -264,6 +242,57 @@
         {
           "expr": "rate(notification_enqueued_total[1m])",
           "legendFormat": "{{channel}} / {{priority}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Active Workers",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 56 },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "worker_active_tasks",
+          "legendFormat": "{{channel}}",
+          "refId": "A"
+        },
+        {
+          "expr": "worker_concurrency",
+          "legendFormat": "max concurrency",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "title": "Worker Utilization",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 56 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.7 },
+              { "color": "red", "value": 0.9 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(worker_active_tasks) / worker_concurrency",
+          "legendFormat": "utilization",
           "refId": "A"
         }
       ]

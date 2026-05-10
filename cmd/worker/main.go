@@ -32,6 +32,8 @@ func main() {
 
 	logger.Init()
 
+	metrics.WorkerConcurrency.Set(float64(cfg.WorkerConcurrency))
+
 	if err := migration.Run(cfg, "./migrations"); err != nil {
 		slog.Error("failed to run migrations", "error", err)
 		os.Exit(1)

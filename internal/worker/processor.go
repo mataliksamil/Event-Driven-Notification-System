@@ -38,7 +38,24 @@ func NewNotificationProcessor(repo domain.NotificationRepository, client domain.
 	}
 }
 
+func channelFromTaskType(taskType string) string {
+	switch taskType {
+	case TaskDeliverySMS:
+		return string(domain.ChannelSMS)
+	case TaskDeliveryEmail:
+		return string(domain.ChannelEmail)
+	case TaskDeliveryPush:
+		return string(domain.ChannelPush)
+	default:
+		return "unknown"
+	}
+}
+
 func (p *NotificationProcessor) ProcessTask(ctx context.Context, t *asynq.Task) error {
+	channel := channelFromTaskType(t.Type())
+	metrics.WorkerActiveTasks.WithLabelValues(channel).Inc()
+	defer metrics.WorkerActiveTasks.WithLabelValues(channel).Dec()
+
 	var payload NotificationPayload
 	if err := json.Unmarshal(t.Payload(), &payload); err != nil {
 		return fmt.Errorf("unmarshal payload: %w", err)
