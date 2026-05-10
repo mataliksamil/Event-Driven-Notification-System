@@ -67,6 +67,11 @@ paths:
           schema:
             type: string
         - in: query
+          name: batch_id
+          schema:
+            type: string
+            format: uuid
+        - in: query
           name: start_date
           schema:
             type: string

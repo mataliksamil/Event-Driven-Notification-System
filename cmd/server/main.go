@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/samil/notification/internal/adapter/batch"
 	"github.com/samil/notification/internal/adapter/middleware"
+	notificationAdapter "github.com/samil/notification/internal/adapter/notification"
 	"github.com/samil/notification/internal/config"
 	"github.com/samil/notification/internal/db"
 	"github.com/samil/notification/internal/logger"
@@ -69,7 +70,9 @@ func main() {
 	prod := producer.NewProducer(asynqClient)
 
 	batchSvc := service.NewBatchService(repo, prod)
-	batchHandler := batch.NewHandler(batchSvc)
+	notificationSvc := service.NewNotificationService(repo)
+	batchHandler := batch.NewHandler(batchSvc, notificationSvc)
+	notificationHandler := notificationAdapter.NewHandler(notificationSvc)
 	idempotencyMW := middleware.NewIdempotency(idempotency)
 	requestLogger := middleware.NewRequestLogger()
 
@@ -87,7 +90,9 @@ func main() {
 	r.Get("/swagger/", swagger.UIHandler())
 
 	r.Route("/api/v1", func(r chi.Router) {
-		r.With(idempotencyMW.Handle).Mount("/notifications/batches", batchHandler.Routes())
+		r.With(idempotencyMW.Handle).Post("/notifications/batches", batchHandler.CreateBatch)
+		r.Get("/batches/{batchId}", batchHandler.GetBatch)
+		r.Mount("/notifications", notificationHandler.Routes())
 	})
 
 	srv := &http.Server{

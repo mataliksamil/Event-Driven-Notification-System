@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/samil/notification/internal/adapter/httputil"
 	"github.com/samil/notification/internal/adapter/middleware"
 	"github.com/samil/notification/internal/domain"
@@ -14,16 +15,18 @@ import (
 )
 
 type Handler struct {
-	batchSvc *service.BatchService
+	batchSvc        *service.BatchService
+	notificationSvc *service.NotificationService
 }
 
-func NewHandler(batchSvc *service.BatchService) *Handler {
-	return &Handler{batchSvc: batchSvc}
+func NewHandler(batchSvc *service.BatchService, notificationSvc *service.NotificationService) *Handler {
+	return &Handler{batchSvc: batchSvc, notificationSvc: notificationSvc}
 }
 
 func (h *Handler) Routes() chi.Router {
 	r := chi.NewRouter()
 	r.Post("/", h.CreateBatch)
+	r.Get("/{batchId}", h.GetBatch)
 	return r
 }
 
@@ -85,5 +88,35 @@ func (h *Handler) CreateBatch(w http.ResponseWriter, r *http.Request) {
 		Status:     result.Status,
 		TotalCount: result.TotalCount,
 		AcceptedAt: result.AcceptedAt,
+	})
+}
+
+func (h *Handler) GetBatch(w http.ResponseWriter, r *http.Request) {
+	batchIDStr := chi.URLParam(r, "batchId")
+	batchID, err := uuid.Parse(batchIDStr)
+	if err != nil {
+		httputil.WriteError(w, http.StatusBadRequest, "invalid batch id")
+		return
+	}
+
+	result, err := h.notificationSvc.GetBatch(r.Context(), batchID)
+	if err != nil {
+		var notFoundErr *domain.ErrNotFound
+		if errors.As(err, &notFoundErr) {
+			httputil.WriteError(w, http.StatusNotFound, notFoundErr.Error())
+			return
+		}
+		slog.Error("internal error getting batch", "error", err)
+		httputil.WriteError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, batchQueryResponse{
+		BatchID:       result.BatchID,
+		IdempotencyKey: result.IdempotencyKey,
+		Status:        result.Status,
+		TotalCount:    result.TotalCount,
+		CreatedAt:     result.CreatedAt,
+		UpdatedAt:     result.UpdatedAt,
 	})
 }
