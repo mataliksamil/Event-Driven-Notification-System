@@ -161,6 +161,7 @@ services:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
       - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-remote-write-receiver"
 
   # --- Monitoring: Redis Exporter ---
   redis-exporter:
@@ -200,6 +201,22 @@ services:
       - "--path.procfs=/host/proc"
       - "--path.sysfs=/host/sys"
       - "--path.rootfs=/rootfs"
+
+  # --- Load Testing: k6 ---
+  k6:
+    image: grafana/k6:latest
+    container_name: k6
+    profiles: ["load-test"]
+    volumes:
+      - ./tests/performance:/tests
+    environment:
+      BASE_URL: http://server:8080
+      MOCK_URL: http://mockwebhook:8888
+      K6_PROMETHEUS_RW_SERVER_URL: http://prometheus:9090/api/v1/write
+    depends_on:
+      - server
+      - worker
+      - mockwebhook
 
 volumes:
   postgres_data:

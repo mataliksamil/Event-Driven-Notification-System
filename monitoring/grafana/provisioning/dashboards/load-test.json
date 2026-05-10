@@ -1,0 +1,296 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": true,
+  "panels": [
+    {
+      "title": "k6 - Virtual Users",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "unit": "VUs" },
+        "overrides": []
+      },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "k6_vus{job=\"k6\"}",
+          "legendFormat": "{{scenario}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "k6 - Request Duration (p50/p95/p99)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "unit": "ms" },
+        "overrides": []
+      },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, rate(k6_http_req_duration_seconds_bucket{job=\"k6\"}[1m])) * 1000",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, rate(k6_http_req_duration_seconds_bucket{job=\"k6\"}[1m])) * 1000",
+          "legendFormat": "p95",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, rate(k6_http_req_duration_seconds_bucket{job=\"k6\"}[1m])) * 1000",
+          "legendFormat": "p99",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "title": "k6 - Requests/s",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "req/s" },
+        "overrides": []
+      },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(k6_http_reqs_total{job=\"k6\"}[1m])",
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "k6 - Error Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit" },
+        "overrides": []
+      },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(k6_http_reqs_total{job=\"k6\", expected_response=\"false\"}[1m]) / rate(k6_http_reqs_total{job=\"k6\"}[1m])",
+          "legendFormat": "error rate",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "k6 - Iterations/s",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": {
+        "defaults": { "unit": "iters/s" },
+        "overrides": []
+      },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(k6_iterations_total{job=\"k6\"}[1m])",
+          "legendFormat": "{{scenario}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "k6 - Checks Pass Rate",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "red" },
+              { "value": 0.95, "color": "yellow" },
+              { "value": 0.99, "color": "green" }
+            ]
+          },
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(k6_checks_total{job=\"k6\", result=\"pass\"}[1m]) / rate(k6_checks_total{job=\"k6\"}[1m])",
+          "legendFormat": "pass rate",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Notification Processing Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "fieldConfig": {
+        "defaults": { "unit": "ops/s" },
+        "overrides": []
+      },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(notification_processed_total[1m])",
+          "legendFormat": "{{channel}} / {{status}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Queue Size",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "targets": [
+        {
+          "expr": "asynq_queue_size",
+          "legendFormat": "{{queue}} total",
+          "refId": "A"
+        },
+        {
+          "expr": "asynq_queue_active",
+          "legendFormat": "{{queue}} active",
+          "refId": "B"
+        },
+        {
+          "expr": "asynq_queue_pending",
+          "legendFormat": "{{queue}} pending",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "title": "Webhook Latency (p95)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "fieldConfig": {
+        "defaults": { "unit": "s" },
+        "overrides": []
+      },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(webhook_request_duration_seconds_bucket[1m]))",
+          "legendFormat": "{{channel}} / {{status_code}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Webhook Requests/s",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "fieldConfig": {
+        "defaults": { "unit": "req/s" },
+        "overrides": []
+      },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(webhook_requests_total[1m])",
+          "legendFormat": "{{channel}} / {{status_code}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Idempotency Cache Hits",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(idempotency_cache_total[1m])",
+          "legendFormat": "{{result}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Redis Memory Usage",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
+      "fieldConfig": {
+        "defaults": { "unit": "bytes" },
+        "overrides": []
+      },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "redis_memory_used_bytes",
+          "legendFormat": "used",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "PostgreSQL Connections",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 48 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "targets": [
+        {
+          "expr": "pg_stat_activity_count",
+          "legendFormat": "{{datname}} {{state}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Notifications Enqueued",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 48 },
+      "fieldConfig": {
+        "defaults": { "unit": "ops/s" },
+        "overrides": []
+      },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(notification_enqueued_total[1m])",
+          "legendFormat": "{{channel}} / {{priority}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "tags": ["load-test", "k6", "notification"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": true, "text": "Prometheus", "value": "Prometheus" },
+        "hide": 0,
+        "includeAll": false,
+        "label": "datasource",
+        "multi": false,
+        "name": "ds",
+        "options": [],
+        "query": "prometheus",
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": { "from": "now-5m", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Load Test",
+  "uid": "load-test",
+  "version": 1
+}
