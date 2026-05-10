@@ -13,6 +13,7 @@ import (
 )
 
 const rateLimitPerSecond = 100
+const maxRetries = 3
 
 type NotificationProcessor struct {
 	repo     domain.NotificationRepository
@@ -85,6 +86,13 @@ func (p *NotificationProcessor) ProcessTask(ctx context.Context, t *asynq.Task) 
 	if delivery.IsTemporaryFailure(sendErr) {
 		retryCount := notification.RetryCount + 1
 		errMsg := sendErr.Error()
+		if retryCount >= maxRetries {
+			if err := p.repo.UpdateNotificationStatus(ctx, notification.ID, domain.NotificationStatusFailed, &errMsg, retryCount); err != nil {
+				log.Printf("failed to update notification %s to failed: %v", notification.ID, err)
+			}
+			log.Printf("notification %s exceeded max retries (%d), marking as failed", notification.ID, maxRetries)
+			return nil
+		}
 		if err := p.repo.UpdateNotificationStatus(ctx, notification.ID, domain.NotificationStatusPending, &errMsg, retryCount); err != nil {
 			log.Printf("failed to update notification %s for retry: %v", notification.ID, err)
 		}
