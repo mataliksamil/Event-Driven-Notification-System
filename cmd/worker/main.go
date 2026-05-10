@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"math/rand"
 	"os"
 	"os/signal"
@@ -13,6 +13,7 @@ import (
 	"github.com/samil/notification/internal/config"
 	"github.com/samil/notification/internal/db"
 	"github.com/samil/notification/internal/delivery"
+	"github.com/samil/notification/internal/logger"
 	"github.com/samil/notification/internal/migration"
 	"github.com/samil/notification/internal/storage"
 	"github.com/samil/notification/internal/worker"
@@ -23,16 +24,21 @@ func main() {
 
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("load config: %v", err)
+		slog.Error("failed to load config", "error", err)
+		os.Exit(1)
 	}
 
+	logger.Init()
+
 	if err := migration.Run(cfg, "./migrations"); err != nil {
-		log.Fatalf("run migrations: %v", err)
+		slog.Error("failed to run migrations", "error", err)
+		os.Exit(1)
 	}
 
 	pool, err := db.NewPool(ctx, cfg)
 	if err != nil {
-		log.Fatalf("connect db: %v", err)
+		slog.Error("failed to connect to db", "error", err)
+		os.Exit(1)
 	}
 	defer pool.Close()
 
@@ -55,10 +61,12 @@ func main() {
 	mux.HandleFunc(worker.TaskDeliveryEmail, processor.ProcessTask)
 	mux.HandleFunc(worker.TaskDeliveryPush, processor.ProcessTask)
 
+	slog.Info("starting worker server", "concurrency", cfg.WorkerConcurrency)
+
 	go func() {
-		log.Println("starting worker server...")
 		if err := srv.Run(mux); err != nil {
-			log.Fatalf("worker server error: %v", err)
+			slog.Error("worker server error", "error", err)
+			os.Exit(1)
 		}
 	}()
 
@@ -66,9 +74,9 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Println("shutting down worker...")
+	slog.Info("shutting down worker")
 	srv.Shutdown()
-	log.Println("worker stopped")
+	slog.Info("worker stopped")
 }
 
 func exponentialBackoffWithJitter(n int, _ error, _ *asynq.Task) time.Duration {

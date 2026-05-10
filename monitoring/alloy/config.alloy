@@ -1,0 +1,75 @@
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
+
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+  refresh_interval = "15s"
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    target_label  = "container"
+    replacement   = "$1"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_id"]
+    target_label  = "container_id"
+  }
+}
+
+loki.source.docker "logs" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.containers.output
+  forward_to = [loki.process.parse_json.receiver]
+}
+
+loki.process "parse_json" {
+  forward_to = [loki.write.default.receiver]
+
+  stage.json {
+    expressions = {
+      "level"           = "level",
+      "component"       = "component",
+      "task_type"       = "task_type",
+      "channel"         = "channel",
+      "notification_id"  = "notification_id",
+      "batch_id"        = "batch_id",
+      "recipient"       = "recipient",
+      "priority"        = "priority",
+      "attempt"         = "attempt",
+      "max_retries"     = "max_retries",
+      "error"           = "error",
+      "duration_ms"    = "duration_ms",
+      "status_code"    = "status_code",
+      "msg"            = "msg",
+      "time"           = "time",
+      "queue"          = "queue",
+    }
+  }
+
+  stage.labels {
+    values = {
+      "level"     = "level",
+      "component" = "component",
+      "task_type" = "task_type",
+      "channel"   = "channel",
+    }
+  }
+
+  stage.timestamp {
+    source = "time"
+    format = "RFC3339Nano"
+  }
+}

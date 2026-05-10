@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -37,8 +37,12 @@ func (s *BatchService) CreateBatch(ctx context.Context, idempotencyKey uuid.UUID
 	batchID := uuid.New()
 	now := time.Now().UTC()
 
+	log := slog.With("component", "batch_service", "batch_id", batchID, "idempotency_key", idempotencyKey, "notification_count", len(inputs))
+	log.Info("creating batch")
+
 	notifications, err := buildNotifications(batchID, now, inputs)
 	if err != nil {
+		log.Warn("batch validation failed", "error", err)
 		return nil, err
 	}
 
@@ -52,14 +56,22 @@ func (s *BatchService) CreateBatch(ctx context.Context, idempotencyKey uuid.UUID
 	}
 
 	if err := s.repo.CreateBatch(ctx, batch, notifications); err != nil {
+		log.Error("failed to create batch in DB", "error", err)
 		return nil, fmt.Errorf("create batch: %w", err)
 	}
 
+	log.Info("batch persisted, enqueuing notifications")
+
 	for _, n := range notifications {
+		nLog := log.With("notification_id", n.ID, "channel", n.Channel, "priority", n.Priority)
 		if err := s.producer.Enqueue(ctx, n); err != nil {
-			log.Printf("failed to enqueue notification %s: %v", n.ID, err)
+			nLog.Error("failed to enqueue notification", "error", err)
+		} else {
+			nLog.Info("notification enqueued")
 		}
 	}
+
+	log.Info("batch created", "status", string(batch.Status))
 
 	return &BatchResult{
 		BatchID:    batch.ID.String(),

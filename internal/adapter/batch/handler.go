@@ -3,6 +3,7 @@ package batch
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -33,18 +34,24 @@ func (h *Handler) CreateBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log := slog.With("component", "batch_handler", "idempotency_key", idempotencyKey)
+	log.Info("received batch creation request")
+
 	var req createBatchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Warn("invalid JSON body", "error", err)
 		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
 
 	if len(req.Notifications) == 0 {
+		log.Warn("empty notifications array")
 		httputil.WriteError(w, http.StatusBadRequest, "notifications array must not be empty")
 		return
 	}
 
 	if len(req.Notifications) > 1000 {
+		log.Warn("notifications array too large", "count", len(req.Notifications))
 		httputil.WriteError(w, http.StatusBadRequest, "notifications array must not exceed 1000 items")
 		return
 	}
@@ -63,13 +70,16 @@ func (h *Handler) CreateBatch(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var valErr *domain.ErrValidation
 		if errors.As(err, &valErr) {
+			log.Warn("validation error", "error", valErr)
 			httputil.WriteError(w, http.StatusBadRequest, valErr.Error())
 			return
 		}
+		log.Error("internal error creating batch", "error", err)
 		httputil.WriteError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
+	log.Info("batch created", "batch_id", result.BatchID, "total_count", result.TotalCount)
 	httputil.WriteJSON(w, http.StatusAccepted, batchResponse{
 		BatchID:    result.BatchID,
 		Status:     result.Status,

@@ -3,6 +3,7 @@ package producer
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
@@ -26,10 +27,21 @@ func (p *Producer) Enqueue(ctx context.Context, notification *domain.Notificatio
 
 	queueName := priorityToQueue(notification.Priority)
 
+	log := slog.With(
+		"component", "producer",
+		"notification_id", notification.ID,
+		"channel", notification.Channel,
+		"priority", notification.Priority,
+		"queue", queueName,
+		"task_type", task.Type(),
+	)
+
 	if _, err = p.client.Enqueue(task, asynq.Queue(queueName)); err != nil {
+		log.Error("failed to enqueue task", "error", err)
 		return fmt.Errorf("enqueue task: %w", err)
 	}
 
+	log.Info("task enqueued")
 	return nil
 }
 

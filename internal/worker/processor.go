@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
+	"time"
 
 	"github.com/hibiken/asynq"
 	"github.com/samil/notification/internal/delivery"
 	"github.com/samil/notification/internal/domain"
+	"github.com/samil/notification/internal/logger"
 	"golang.org/x/time/rate"
 )
 
@@ -41,21 +43,35 @@ func (p *NotificationProcessor) ProcessTask(ctx context.Context, t *asynq.Task) 
 		return fmt.Errorf("unmarshal payload: %w", err)
 	}
 
+	log := slog.With("task_type", t.Type(), "notification_id", payload.NotificationID)
+	ctx = logger.WithAttrs(ctx, "notification_id", payload.NotificationID, "task_type", t.Type())
+
 	notification, err := p.repo.GetNotificationByID(ctx, payload.NotificationID)
 	if err != nil {
+		log.Error("failed to fetch notification", "error", err)
 		return fmt.Errorf("get notification %s: %w", payload.NotificationID, err)
 	}
 
+	log = log.With(
+		"channel", notification.Channel,
+		"recipient", notification.Recipient,
+		"priority", notification.Priority,
+		"batch_id", notification.BatchID,
+	)
+
 	if notification.Status == domain.NotificationStatusDelivered ||
 		notification.Status == domain.NotificationStatusCancelled {
-		log.Printf("[PROCESSOR] notification %s: skipped, already %s", notification.ID, notification.Status)
+		log.Info("skipped", "status", notification.Status)
 		return nil
 	}
 
 	attempt := notification.RetryCount + 1
-	log.Printf("[PROCESSOR] notification %s: attempt %d/%d, sending %s to %s", notification.ID, attempt, maxRetries, notification.Channel, notification.Recipient)
+	log = log.With("attempt", attempt, "max_retries", maxRetries)
+
+	log.Info("processing notification")
 
 	if err := p.repo.UpdateNotificationStatus(ctx, notification.ID, domain.NotificationStatusProcessing, nil, notification.RetryCount); err != nil {
+		log.Error("failed to update status to processing", "error", err)
 		return fmt.Errorf("update status to processing: %w", err)
 	}
 
@@ -63,30 +79,34 @@ func (p *NotificationProcessor) ProcessTask(ctx context.Context, t *asynq.Task) 
 	if !ok {
 		errMsg := fmt.Sprintf("unknown channel: %s", notification.Channel)
 		_ = p.repo.UpdateNotificationStatus(ctx, notification.ID, domain.NotificationStatusFailed, &errMsg, notification.RetryCount)
-		log.Printf("[PROCESSOR] notification %s: failed, unknown channel %s", notification.ID, notification.Channel)
+		log.Error("unknown channel", "channel", notification.Channel)
 		return nil
 	}
 
+	rateLimitStart := time.Now()
 	if err := limiter.Wait(ctx); err != nil {
+		log.Error("rate limiter wait failed", "error", err, "wait_duration", time.Since(rateLimitStart))
 		return fmt.Errorf("rate limiter wait: %w", err)
 	}
+	log.Info("rate limiter acquired", "wait_duration_ms", time.Since(rateLimitStart).Milliseconds())
 
+	ctx = logger.WithAttrs(ctx, "channel", notification.Channel, "attempt", attempt)
 	sendErr := p.client.Send(ctx, notification.Recipient, notification.Channel, notification.Content)
 
 	if sendErr == nil {
 		if err := p.repo.UpdateNotificationStatus(ctx, notification.ID, domain.NotificationStatusDelivered, nil, notification.RetryCount); err != nil {
-			log.Printf("[PROCESSOR] notification %s: delivered but failed to update DB: %v", notification.ID, err)
+			log.Error("delivered but failed to update DB", "error", err)
 		}
-		log.Printf("[PROCESSOR] notification %s: delivered successfully", notification.ID)
+		log.Info("delivered")
 		return nil
 	}
 
 	if delivery.IsPermanentFailure(sendErr) {
 		errMsg := sendErr.Error()
 		if err := p.repo.UpdateNotificationStatus(ctx, notification.ID, domain.NotificationStatusFailed, &errMsg, notification.RetryCount); err != nil {
-			log.Printf("[PROCESSOR] notification %s: permanent failure but failed to update DB: %v", notification.ID, err)
+			log.Error("permanent failure but failed to update DB", "error", err)
 		}
-		log.Printf("[PROCESSOR] notification %s: permanent failure (4xx): %s", notification.ID, errMsg)
+		log.Warn("permanent failure", "error", errMsg)
 		return nil
 	}
 
@@ -95,22 +115,22 @@ func (p *NotificationProcessor) ProcessTask(ctx context.Context, t *asynq.Task) 
 		errMsg := sendErr.Error()
 		if retryCount >= maxRetries {
 			if err := p.repo.UpdateNotificationStatus(ctx, notification.ID, domain.NotificationStatusFailed, &errMsg, retryCount); err != nil {
-				log.Printf("[PROCESSOR] notification %s: max retries exceeded but failed to update DB: %v", notification.ID, err)
+				log.Error("max retries exceeded but failed to update DB", "error", err)
 			}
-			log.Printf("[PROCESSOR] notification %s: max retries (%d) exceeded, marking as failed", notification.ID, maxRetries)
+			log.Warn("max retries exceeded, marking as failed", "retry_count", retryCount)
 			return nil
 		}
 		if err := p.repo.UpdateNotificationStatus(ctx, notification.ID, domain.NotificationStatusPending, &errMsg, retryCount); err != nil {
-			log.Printf("[PROCESSOR] notification %s: temporary failure but failed to update DB for retry: %v", notification.ID, err)
+			log.Error("temporary failure but failed to update DB for retry", "error", err)
 		}
-		log.Printf("[PROCESSOR] notification %s: temporary failure, retry %d/%d in ~%ds: %s", notification.ID, retryCount, maxRetries-1, (retryCount+1)*10, errMsg)
+		log.Warn("temporary failure, will retry", "retry_count", retryCount, "error", errMsg)
 		return fmt.Errorf("temporary failure for notification %s: %w", notification.ID, sendErr)
 	}
 
 	if err := p.repo.UpdateNotificationStatus(ctx, notification.ID, domain.NotificationStatusFailed, strPtr(sendErr.Error()), notification.RetryCount); err != nil {
-		log.Printf("[PROCESSOR] notification %s: unexpected error but failed to update DB: %v", notification.ID, err)
+		log.Error("unexpected error but failed to update DB", "error", err)
 	}
-	log.Printf("[PROCESSOR] notification %s: unexpected error, marking as failed: %s", notification.ID, sendErr.Error())
+	log.Error("unexpected error, marking as failed", "error", sendErr)
 	return nil
 }
 

@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,6 +16,7 @@ import (
 	"github.com/samil/notification/internal/adapter/middleware"
 	"github.com/samil/notification/internal/config"
 	"github.com/samil/notification/internal/db"
+	"github.com/samil/notification/internal/logger"
 	"github.com/samil/notification/internal/migration"
 	"github.com/samil/notification/internal/producer"
 	redisSvc "github.com/samil/notification/internal/redis"
@@ -29,26 +30,33 @@ func main() {
 
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("load config: %v", err)
+		slog.Error("failed to load config", "error", err)
+		os.Exit(1)
 	}
 
+	logger.Init()
+
 	if err := migration.Run(cfg, "./migrations"); err != nil {
-		log.Fatalf("run migrations: %v", err)
+		slog.Error("failed to run migrations", "error", err)
+		os.Exit(1)
 	}
 
 	if err := swagger.Load("./oapi.yaml"); err != nil {
-		log.Fatalf("load openapi spec: %v", err)
+		slog.Error("failed to load openapi spec", "error", err)
+		os.Exit(1)
 	}
 
 	pool, err := db.NewPool(ctx, cfg)
 	if err != nil {
-		log.Fatalf("connect db: %v", err)
+		slog.Error("failed to connect to db", "error", err)
+		os.Exit(1)
 	}
 	defer pool.Close()
 
 	redisClient, err := redisSvc.NewClient(ctx, cfg)
 	if err != nil {
-		log.Fatalf("connect redis: %v", err)
+		slog.Error("failed to connect to redis", "error", err)
+		os.Exit(1)
 	}
 	defer redisClient.Close()
 
@@ -62,8 +70,11 @@ func main() {
 	batchSvc := service.NewBatchService(repo, prod)
 	batchHandler := batch.NewHandler(batchSvc)
 	idempotencyMW := middleware.NewIdempotency(idempotency)
+	requestLogger := middleware.NewRequestLogger()
 
 	r := chi.NewRouter()
+	r.Use(requestLogger.Handler)
+
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
@@ -86,9 +97,10 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("server listening on %s", srv.Addr)
+		slog.Info("server starting", "addr", srv.Addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("server error: %v", err)
+			slog.Error("server error", "error", err)
+			os.Exit(1)
 		}
 	}()
 
@@ -96,12 +108,13 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Println("shutting down server...")
+	slog.Info("shutting down server")
 	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Fatalf("server shutdown error: %v", err)
+		slog.Error("server shutdown error", "error", err)
+		os.Exit(1)
 	}
-	log.Println("server stopped")
+	slog.Info("server stopped")
 }

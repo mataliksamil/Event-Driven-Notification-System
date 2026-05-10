@@ -7,11 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"time"
 
 	"github.com/samil/notification/internal/domain"
+	"github.com/samil/notification/internal/logger"
 )
 
 type RestError struct {
@@ -76,6 +76,12 @@ func NewWebhookClient(webhookURL string) *WebhookClient {
 }
 
 func (c *WebhookClient) Send(ctx context.Context, recipient string, channel domain.Channel, content string) error {
+	log := logger.FromContext(ctx).With(
+		"component", "webhook",
+		"recipient", recipient,
+		"channel", string(channel),
+	)
+
 	payload := webhookPayload{
 		Recipient: recipient,
 		Channel:   string(channel),
@@ -84,25 +90,32 @@ func (c *WebhookClient) Send(ctx context.Context, recipient string, channel doma
 
 	body, err := json.Marshal(payload)
 	if err != nil {
+		log.Error("failed to marshal payload", "error", err)
 		return fmt.Errorf("marshal payload: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.webhookURL, bytes.NewReader(body))
 	if err != nil {
+		log.Error("failed to create request", "error", err)
 		return fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	log.Printf("[WEBHOOK] sending %s %s body=%s", req.Method, c.webhookURL, string(body))
+	log.Info("sending webhook request", "method", req.Method, "url", c.webhookURL)
 
+	start := time.Now()
 	resp, err := c.client.Do(req)
+	elapsed := time.Since(start)
+
 	if err != nil {
+		log.Error("webhook request failed", "error", err, "duration_ms", elapsed.Milliseconds())
 		return &ErrNetworkFailure{Err: fmt.Errorf("http request: %w", err)}
 	}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
-	log.Printf("[WEBHOOK] response status=%d body=%s", resp.StatusCode, string(respBody))
+
+	log.Info("webhook response", "status_code", resp.StatusCode, "duration_ms", elapsed.Milliseconds(), "response_body", string(respBody))
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return nil
