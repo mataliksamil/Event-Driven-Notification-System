@@ -1,0 +1,71 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: samil
+          POSTGRES_PASSWORD: mysecretpassword
+          POSTGRES_DB: myappdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U samil -d myappdb"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run migrations
+        run: go run ./cmd/server/main.go &
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: samil
+          DB_PASSWORD: mysecretpassword
+          DB_NAME: myappdb
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          SERVER_PORT: 8080
+          LOG_LEVEL: error
+
+      - name: Wait for migrations
+        run: sleep 3
+
+      - name: Run integration tests
+        run: go test -v -count=1 -tags=integration -timeout=120s ./tests/integration/
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: samil
+          DB_PASSWORD: mysecretpassword
+          DB_NAME: myappdb
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          LOG_LEVEL: error
