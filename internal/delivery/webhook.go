@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"time"
 
@@ -35,14 +37,19 @@ func (e *ErrNetworkFailure) Unwrap() error {
 
 func IsPermanentFailure(err error) bool {
 	var restErr *RestError
-	return errors.As(err, &restErr) &&
-		restErr.StatusCode >= 400 && restErr.StatusCode < 500
+	if !errors.As(err, &restErr) {
+		return false
+	}
+	if restErr.StatusCode == http.StatusTooManyRequests {
+		return false
+	}
+	return restErr.StatusCode >= 400 && restErr.StatusCode < 500
 }
 
 func IsTemporaryFailure(err error) bool {
 	var restErr *RestError
 	if errors.As(err, &restErr) {
-		return restErr.StatusCode >= 500
+		return restErr.StatusCode >= 500 || restErr.StatusCode == http.StatusTooManyRequests
 	}
 	var netErr *ErrNetworkFailure
 	return errors.As(err, &netErr)
@@ -86,11 +93,16 @@ func (c *WebhookClient) Send(ctx context.Context, recipient string, channel doma
 	}
 	req.Header.Set("Content-Type", "application/json")
 
+	log.Printf("[WEBHOOK] sending %s %s body=%s", req.Method, c.webhookURL, string(body))
+
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return &ErrNetworkFailure{Err: fmt.Errorf("http request: %w", err)}
 	}
 	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	log.Printf("[WEBHOOK] response status=%d body=%s", resp.StatusCode, string(respBody))
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return nil

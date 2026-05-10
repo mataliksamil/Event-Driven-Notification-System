@@ -1,5 +1,5 @@
 services:
-  # --- PostgreSQL & pgAdmin ---
+  # --- PostgreSQL ---
   db:
     image: postgres:15-alpine
     container_name: postgres_db
@@ -17,18 +17,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-
-  pgadmin:
-    image: dpage/pgadmin4
-    container_name: pgadmin_ui
-    environment:
-      PGADMIN_DEFAULT_EMAIL: admin@admin.com
-      PGADMIN_DEFAULT_PASSWORD: admin
-    ports:
-      - "5050:80"
-    depends_on:
-      db:
-        condition: service_healthy
 
   # --- Redis & RedisInsight ---
   redis:
@@ -53,6 +41,13 @@ services:
       redis:
         condition: service_healthy
 
+  # --- Mock Webhook ---
+  mockwebhook:
+    build: ./mockwebhook
+    container_name: mock_webhook
+    ports:
+      - "8888:8888"
+
   # --- Server ---
   server:
     build: .
@@ -70,12 +65,14 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       SERVER_PORT: "8080"
-      WEBHOOK_URL: https://webhook.site/4b9f3602-73b6-44e5-8751-dfa02509efd1
+      WEBHOOK_URL: http://mockwebhook:8888
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+      mockwebhook:
+        condition: service_started
 
   # --- Worker ---
   worker:
@@ -91,13 +88,15 @@ services:
       DB_SSLMODE: disable
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      WEBHOOK_URL: https://webhook.site/4b9f3602-73b6-44e5-8751-dfa02509efd1
+      WEBHOOK_URL: http://mockwebhook:8888
       WORKER_CONCURRENCY: 20
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+      mockwebhook:
+        condition: service_started
 
 volumes:
   postgres_data:
