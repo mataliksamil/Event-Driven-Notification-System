@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"log"
-	"math"
 	"math/rand"
 	"os"
 	"os/signal"
@@ -73,9 +72,9 @@ func main() {
 }
 
 func exponentialBackoffWithJitter(n int, _ error, _ *asynq.Task) time.Duration {
-	base := time.Duration(math.Pow(2, float64(n))) * 2 * time.Second
-	if base > 5*time.Minute {
-		base = 5 * time.Minute
+	base := time.Duration(n+1) * 10 * time.Second
+	if base > time.Minute {
+		base = time.Minute
 	}
 	jitter := time.Duration(rand.Intn(2000)) * time.Millisecond
 	return base + jitter
