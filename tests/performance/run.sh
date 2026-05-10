@@ -19,9 +19,9 @@ sleep 15
 echo ""
 echo "[3/3] Running k6 load test..."
 echo "  Scenarios:"
-echo "    warmup:    0 → 50 VUs over 30s"
-echo "    sustained: 50 VUs for 2m"
-echo "    spike:     50 → 150 VUs, hold 30s, ramp down 20s"
+echo "    warmup:    0 → 20 VUs over 15s"
+echo "    sustained: 20 VUs for 1m"
+echo "    spike:     20 → 60 VUs, hold 15s, ramp down 10s"
 echo ""
 
 docker compose -f "$PROJECT_DIR/docker-compose.yaml" \
