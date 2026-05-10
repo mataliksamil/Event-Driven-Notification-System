@@ -30,7 +30,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger.Init()
+	logger.InitWithLevel(cfg.LogLevel)
 
 	metrics.WorkerConcurrency.Set(float64(cfg.WorkerConcurrency))
 

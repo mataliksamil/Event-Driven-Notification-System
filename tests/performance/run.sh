@@ -9,8 +9,8 @@ echo "  Notification System - k6 Load Test"
 echo "=========================================="
 
 echo ""
-echo "[1/3] Starting docker compose stack..."
-docker compose -f "$PROJECT_DIR/docker-compose.yaml" up -d
+echo "[1/3] Starting docker compose stack (LOG_LEVEL=error)..."
+LOG_LEVEL=error docker compose -f "$PROJECT_DIR/docker-compose.yaml" up -d
 
 echo ""
 echo "[2/3] Waiting for services (15s)..."

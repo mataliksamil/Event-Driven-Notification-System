@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 
@@ -21,6 +22,7 @@ type Config struct {
 	WebhookURL        string
 	WorkerConcurrency int
 	MetricsPort       string
+	LogLevel          slog.Level
 }
 
 func Load() (*Config, error) {
@@ -52,6 +54,7 @@ func Load() (*Config, error) {
 		WebhookURL:        envOr("WEBHOOK_URL", ""),
 		WorkerConcurrency: workerConcurrency,
 		MetricsPort:       envOr("METRICS_PORT", "9090"),
+		LogLevel:          parseLogLevel(envOr("LOG_LEVEL", "info")),
 	}, nil
 }
 
@@ -73,4 +76,17 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func parseLogLevel(s string) slog.Level {
+	switch s {
+	case "debug":
+		return slog.LevelDebug
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
 }

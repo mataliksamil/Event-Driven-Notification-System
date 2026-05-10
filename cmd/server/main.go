@@ -36,7 +36,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger.Init()
+	logger.InitWithLevel(cfg.LogLevel)
 
 	if err := migration.Run(cfg, "./migrations"); err != nil {
 		slog.Error("failed to run migrations", "error", err)
