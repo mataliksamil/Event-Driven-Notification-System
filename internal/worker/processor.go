@@ -11,6 +11,7 @@ import (
 	"github.com/samil/notification/internal/delivery"
 	"github.com/samil/notification/internal/domain"
 	"github.com/samil/notification/internal/logger"
+	"github.com/samil/notification/internal/metrics"
 	"golang.org/x/time/rate"
 )
 
@@ -85,18 +86,27 @@ func (p *NotificationProcessor) ProcessTask(ctx context.Context, t *asynq.Task) 
 
 	rateLimitStart := time.Now()
 	if err := limiter.Wait(ctx); err != nil {
-		log.Error("rate limiter wait failed", "error", err, "wait_duration", time.Since(rateLimitStart))
+		waitDur := time.Since(rateLimitStart)
+		metrics.RateLimiterWaitDuration.WithLabelValues(string(notification.Channel)).Observe(waitDur.Seconds())
+		log.Error("rate limiter wait failed", "error", err, "wait_duration", waitDur)
 		return fmt.Errorf("rate limiter wait: %w", err)
 	}
-	log.Info("rate limiter acquired", "wait_duration_ms", time.Since(rateLimitStart).Milliseconds())
+	waitDur := time.Since(rateLimitStart)
+	metrics.RateLimiterWaitDuration.WithLabelValues(string(notification.Channel)).Observe(waitDur.Seconds())
+	log.Info("rate limiter acquired", "wait_duration_ms", waitDur.Milliseconds())
 
 	ctx = logger.WithAttrs(ctx, "channel", notification.Channel, "attempt", attempt)
+
+	processingStart := time.Now()
 	sendErr := p.client.Send(ctx, notification.Recipient, notification.Channel, notification.Content)
+	processingDur := time.Since(processingStart)
+	metrics.ProcessingDuration.WithLabelValues(string(notification.Channel)).Observe(processingDur.Seconds())
 
 	if sendErr == nil {
 		if err := p.repo.UpdateNotificationStatus(ctx, notification.ID, domain.NotificationStatusDelivered, nil, notification.RetryCount); err != nil {
 			log.Error("delivered but failed to update DB", "error", err)
 		}
+		metrics.NotificationsProcessed.WithLabelValues(string(notification.Channel), "delivered").Inc()
 		log.Info("delivered")
 		return nil
 	}
@@ -106,6 +116,7 @@ func (p *NotificationProcessor) ProcessTask(ctx context.Context, t *asynq.Task) 
 		if err := p.repo.UpdateNotificationStatus(ctx, notification.ID, domain.NotificationStatusFailed, &errMsg, notification.RetryCount); err != nil {
 			log.Error("permanent failure but failed to update DB", "error", err)
 		}
+		metrics.NotificationsProcessed.WithLabelValues(string(notification.Channel), "failed_permanent").Inc()
 		log.Warn("permanent failure", "error", errMsg)
 		return nil
 	}
@@ -117,12 +128,14 @@ func (p *NotificationProcessor) ProcessTask(ctx context.Context, t *asynq.Task) 
 			if err := p.repo.UpdateNotificationStatus(ctx, notification.ID, domain.NotificationStatusFailed, &errMsg, retryCount); err != nil {
 				log.Error("max retries exceeded but failed to update DB", "error", err)
 			}
+			metrics.NotificationsProcessed.WithLabelValues(string(notification.Channel), "failed_max_retries").Inc()
 			log.Warn("max retries exceeded, marking as failed", "retry_count", retryCount)
 			return nil
 		}
 		if err := p.repo.UpdateNotificationStatus(ctx, notification.ID, domain.NotificationStatusPending, &errMsg, retryCount); err != nil {
 			log.Error("temporary failure but failed to update DB for retry", "error", err)
 		}
+		metrics.NotificationsProcessed.WithLabelValues(string(notification.Channel), "retried").Inc()
 		log.Warn("temporary failure, will retry", "retry_count", retryCount, "error", errMsg)
 		return fmt.Errorf("temporary failure for notification %s: %w", notification.ID, sendErr)
 	}
@@ -130,6 +143,7 @@ func (p *NotificationProcessor) ProcessTask(ctx context.Context, t *asynq.Task) 
 	if err := p.repo.UpdateNotificationStatus(ctx, notification.ID, domain.NotificationStatusFailed, strPtr(sendErr.Error()), notification.RetryCount); err != nil {
 		log.Error("unexpected error but failed to update DB", "error", err)
 	}
+	metrics.NotificationsProcessed.WithLabelValues(string(notification.Channel), "failed_unexpected").Inc()
 	log.Error("unexpected error, marking as failed", "error", sendErr)
 	return nil
 }

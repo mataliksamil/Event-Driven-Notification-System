@@ -106,3 +106,24 @@ func (r *PostgresRepository) GetBatchByIdempotencyKey(ctx context.Context, key u
 	b.Status = domain.BatchStatus(status)
 	return &b, nil
 }
+
+func (r *PostgresRepository) CountByStatus(ctx context.Context) (map[string]int, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT status, COUNT(*) FROM notifications GROUP BY status`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("count notifications by status: %w", err)
+	}
+	defer rows.Close()
+
+	counts := make(map[string]int)
+	for rows.Next() {
+		var status string
+		var count int
+		if err := rows.Scan(&status, &count); err != nil {
+			return nil, fmt.Errorf("scan notification count: %w", err)
+		}
+		counts[status] = count
+	}
+	return counts, rows.Err()
+}

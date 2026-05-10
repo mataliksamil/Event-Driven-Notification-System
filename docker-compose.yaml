@@ -79,6 +79,8 @@ services:
     build: .
     command: ["./worker"]
     container_name: notification_worker
+    ports:
+      - "9090:9090"
     environment:
       DB_HOST: db
       DB_PORT: 5432
@@ -90,6 +92,7 @@ services:
       REDIS_PORT: 6379
       WEBHOOK_URL: http://mockwebhook:8888
       WORKER_CONCURRENCY: 20
+      METRICS_PORT: "9090"
     depends_on:
       db:
         condition: service_healthy
@@ -98,7 +101,7 @@ services:
       mockwebhook:
         condition: service_started
 
-  # --- Monitoring ---
+  # --- Monitoring: Loki ---
   loki:
     image: grafana/loki:3.3.2
     container_name: loki
@@ -114,6 +117,7 @@ services:
       timeout: 5s
       retries: 10
 
+  # --- Monitoring: Alloy ---
   alloy:
     image: grafana/alloy:v1.7.2
     container_name: alloy
@@ -127,6 +131,7 @@ services:
       loki:
         condition: service_healthy
 
+  # --- Monitoring: Grafana ---
   grafana:
     image: grafana/grafana:11.4.0
     container_name: grafana
@@ -143,8 +148,62 @@ services:
       loki:
         condition: service_healthy
 
+  # --- Monitoring: Prometheus ---
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    container_name: prometheus
+    ports:
+      - "9099:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+
+  # --- Monitoring: Redis Exporter ---
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.69.0-alpine
+    container_name: redis_exporter
+    ports:
+      - "9121:9121"
+    environment:
+      REDIS_ADDR: redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # --- Monitoring: PostgreSQL Exporter ---
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.16.0
+    container_name: postgres_exporter
+    ports:
+      - "9187:9187"
+    environment:
+      DATA_SOURCE_NAME: "postgresql://samil:mysecretpassword@db:5432/myappdb?sslmode=disable"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # --- Monitoring: Node Exporter ---
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: node_exporter
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
+
 volumes:
   postgres_data:
   redis_data:
   loki_data:
   grafana_data:
+  prometheus_data:

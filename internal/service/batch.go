@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/samil/notification/internal/domain"
+	"github.com/samil/notification/internal/metrics"
 )
 
 type BatchService struct {
@@ -61,6 +62,7 @@ func (s *BatchService) CreateBatch(ctx context.Context, idempotencyKey uuid.UUID
 	}
 
 	log.Info("batch persisted, enqueuing notifications")
+	metrics.BatchesCreatedTotal.Inc()
 
 	for _, n := range notifications {
 		nLog := log.With("notification_id", n.ID, "channel", n.Channel, "priority", n.Priority)
@@ -68,6 +70,7 @@ func (s *BatchService) CreateBatch(ctx context.Context, idempotencyKey uuid.UUID
 			nLog.Error("failed to enqueue notification", "error", err)
 		} else {
 			nLog.Info("notification enqueued")
+		metrics.NotificationsEnqueuedTotal.WithLabelValues(string(n.Channel), string(n.Priority)).Inc()
 		}
 	}
 

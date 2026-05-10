@@ -7,6 +7,7 @@ import (
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
+	"github.com/samil/notification/internal/metrics"
 )
 
 type IdempotencyStatus int
@@ -48,12 +49,14 @@ func (s *IdempotencyService) Acquire(ctx context.Context, key string) (*Idempote
 	if err == nil {
 		if val == "processing" {
 			log.Info("idempotency key found in processing state")
+			metrics.IdempotencyCacheHits.WithLabelValues("processing").Inc()
 			return &IdempotencyResult{Status: StatusProcessing}, nil
 		}
 
 		if len(val) > len(completedPrefix) && val[:len(completedPrefix)] == completedPrefix {
 			cached := []byte(val[len(completedPrefix):])
 			log.Info("idempotency key found in completed state")
+			metrics.IdempotencyCacheHits.WithLabelValues("completed").Inc()
 			return &IdempotencyResult{Status: StatusCompleted, CachedResponse: cached}, nil
 		}
 
@@ -67,6 +70,7 @@ func (s *IdempotencyService) Acquire(ctx context.Context, key string) (*Idempote
 	}
 	if !ok {
 		log.Info("idempotency key acquired by another process")
+		metrics.IdempotencyCacheHits.WithLabelValues("processing").Inc()
 		return &IdempotencyResult{Status: StatusProcessing}, nil
 	}
 

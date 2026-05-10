@@ -1,0 +1,252 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "title": "Notification Processing Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "unit": "ops/s" },
+        "overrides": []
+      },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(notification_processed_total[5m])",
+          "legendFormat": "{{channel}} / {{status}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Average Processing Duration",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "unit": "s" },
+        "overrides": []
+      },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(notification_processing_duration_seconds_sum[5m]) / rate(notification_processing_duration_seconds_count[5m])",
+          "legendFormat": "{{channel}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Rate Limiter Wait Duration",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "s" },
+        "overrides": []
+      },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(notification_rate_limiter_wait_seconds_bucket[5m]))",
+          "legendFormat": "p95 {{channel}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.5, rate(notification_rate_limiter_wait_seconds_bucket[5m]))",
+          "legendFormat": "p50 {{channel}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "title": "Queue Size",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "targets": [
+        {
+          "expr": "asynq_queue_size",
+          "legendFormat": "{{queue}} total",
+          "refId": "A"
+        },
+        {
+          "expr": "asynq_queue_active",
+          "legendFormat": "{{queue}} active",
+          "refId": "B"
+        },
+        {
+          "expr": "asynq_queue_pending",
+          "legendFormat": "{{queue}} pending",
+          "refId": "C"
+        },
+        {
+          "expr": "asynq_queue_retry",
+          "legendFormat": "{{queue}} retry",
+          "refId": "D"
+        }
+      ]
+    },
+    {
+      "title": "Webhook Latency (p95)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": {
+        "defaults": { "unit": "s" },
+        "overrides": []
+      },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(webhook_request_duration_seconds_bucket[5m]))",
+          "legendFormat": "{{channel}} / {{status_code}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Webhook Requests/s",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": {
+        "defaults": { "unit": "req/s" },
+        "overrides": []
+      },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(webhook_requests_total[5m])",
+          "legendFormat": "{{channel}} / {{status_code}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Notifications by Status (DB)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 24 },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "notification_db_count",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Batches Created",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 24 },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "batch_created_total",
+          "legendFormat": "total",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Idempotency Cache Hits",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 24 },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(idempotency_cache_total[5m])",
+          "legendFormat": "{{result}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Redis Keyspace Hit Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 30 },
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit" },
+        "overrides": []
+      },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(redis_keyspace_hits_total[5m]) / (rate(redis_keyspace_hits_total[5m]) + rate(redis_keyspace_misses_total[5m]) > 0)",
+          "legendFormat": "hit rate",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Redis Memory Usage",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 30 },
+      "fieldConfig": {
+        "defaults": { "unit": "bytes" },
+        "overrides": []
+      },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "redis_memory_used_bytes",
+          "legendFormat": "used",
+          "refId": "A"
+        },
+        {
+          "expr": "redis_memory_max_bytes",
+          "legendFormat": "max",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "title": "PostgreSQL Connections",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 38 },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "pg_stat_activity_count",
+          "legendFormat": "{{datname}} {{state}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Notifications Enqueued",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 38 },
+      "fieldConfig": {
+        "defaults": { "unit": "ops/s" },
+        "overrides": []
+      },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(notification_enqueued_total[5m])",
+          "legendFormat": "{{channel}} / {{priority}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["notification"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Notification System",
+  "uid": "notification-system",
+  "version": 1
+}

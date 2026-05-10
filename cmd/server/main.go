@@ -17,6 +17,7 @@ import (
 	"github.com/samil/notification/internal/config"
 	"github.com/samil/notification/internal/db"
 	"github.com/samil/notification/internal/logger"
+	"github.com/samil/notification/internal/metrics"
 	"github.com/samil/notification/internal/migration"
 	"github.com/samil/notification/internal/producer"
 	redisSvc "github.com/samil/notification/internal/redis"
@@ -74,6 +75,7 @@ func main() {
 
 	r := chi.NewRouter()
 	r.Use(requestLogger.Handler)
+	r.Get("/metrics", metrics.Handler().ServeHTTP)
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

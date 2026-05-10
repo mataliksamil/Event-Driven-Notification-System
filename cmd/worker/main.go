@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"math/rand"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/samil/notification/internal/db"
 	"github.com/samil/notification/internal/delivery"
 	"github.com/samil/notification/internal/logger"
+	"github.com/samil/notification/internal/metrics"
 	"github.com/samil/notification/internal/migration"
 	"github.com/samil/notification/internal/storage"
 	"github.com/samil/notification/internal/worker"
@@ -46,7 +48,20 @@ func main() {
 	webhookClient := delivery.NewWebhookClient(cfg.WebhookURL)
 	processor := worker.NewNotificationProcessor(repo, webhookClient)
 
-	srv := asynq.NewServer(cfg.AsynqRedisOpt(), asynq.Config{
+	metricsAddr := fmt.Sprintf(":%s", cfg.MetricsPort)
+	metrics.StartServer(metricsAddr)
+
+	redisOpt := cfg.AsynqRedisOpt()
+	inspector := worker.NewAsynqInspector(redisOpt)
+	defer inspector.Close()
+
+	collectCtx, collectCancel := context.WithCancel(ctx)
+	defer collectCancel()
+
+	metrics.StartQueueCollector(collectCtx, inspector, 10*time.Second)
+	metrics.StartDBCollector(collectCtx, repo, 10*time.Second)
+
+	srv := asynq.NewServer(redisOpt, asynq.Config{
 		Concurrency: cfg.WorkerConcurrency,
 		Queues: map[string]int{
 			"critical": 10,
@@ -76,6 +91,7 @@ func main() {
 
 	slog.Info("shutting down worker")
 	srv.Shutdown()
+	collectCancel()
 	slog.Info("worker stopped")
 }
 

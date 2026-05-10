@@ -19,6 +19,6 @@ COPY --from=builder /worker /worker
 COPY --from=builder /app/migrations /migrations
 COPY --from=builder /app/oapi.yaml /oapi.yaml
 
-EXPOSE 8080
+EXPOSE 8080 9090
 
 CMD ["/server"]

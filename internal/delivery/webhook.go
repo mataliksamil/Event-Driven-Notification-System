@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/samil/notification/internal/domain"
 	"github.com/samil/notification/internal/logger"
+	"github.com/samil/notification/internal/metrics"
 )
 
 type RestError struct {
@@ -106,6 +108,15 @@ func (c *WebhookClient) Send(ctx context.Context, recipient string, channel doma
 	start := time.Now()
 	resp, err := c.client.Do(req)
 	elapsed := time.Since(start)
+
+	statusCode := 0
+	if err == nil {
+		statusCode = resp.StatusCode
+	}
+	statusStr := strconv.Itoa(statusCode)
+
+	metrics.WebhookRequestDuration.WithLabelValues(string(channel), statusStr).Observe(elapsed.Seconds())
+	metrics.WebhookRequestsTotal.WithLabelValues(string(channel), statusStr).Inc()
 
 	if err != nil {
 		log.Error("webhook request failed", "error", err, "duration_ms", elapsed.Milliseconds())

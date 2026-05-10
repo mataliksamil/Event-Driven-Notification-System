@@ -20,6 +20,7 @@ type Config struct {
 	ServerPort        string
 	WebhookURL        string
 	WorkerConcurrency int
+	MetricsPort       string
 }
 
 func Load() (*Config, error) {
@@ -50,6 +51,7 @@ func Load() (*Config, error) {
 		ServerPort:        envOr("SERVER_PORT", "8080"),
 		WebhookURL:        envOr("WEBHOOK_URL", ""),
 		WorkerConcurrency: workerConcurrency,
+		MetricsPort:       envOr("METRICS_PORT", "9090"),
 	}, nil
 }
 
