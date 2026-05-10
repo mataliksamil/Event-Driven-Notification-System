@@ -71,6 +71,9 @@ func (r *PostgresRepository) GetNotificationByID(ctx context.Context, id uuid.UU
 		id,
 	).Scan(&n.ID, &n.BatchID, &n.Recipient, &channel, &n.Content, &priority, &status, &n.ErrorMessage, &n.RetryCount, &n.CreatedAt, &n.UpdatedAt)
 	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("query notification by id: %w", err)
 	}
 

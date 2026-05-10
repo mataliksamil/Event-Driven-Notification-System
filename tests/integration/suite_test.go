@@ -7,8 +7,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -17,8 +19,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/samil/notification/internal/adapter/batch"
+	notificationAdapter "github.com/samil/notification/internal/adapter/notification"
 	"github.com/samil/notification/internal/adapter/middleware"
 	"github.com/samil/notification/internal/config"
+	"github.com/samil/notification/internal/delivery"
 	"github.com/samil/notification/internal/producer"
 	redisSvc "github.com/samil/notification/internal/redis"
 	"github.com/samil/notification/internal/service"
@@ -27,17 +31,78 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-type BatchTestSuite struct {
+type IntegrationSuite struct {
 	suite.Suite
-	server      *httptest.Server
-	pool        *pgxpool.Pool
-	redisClient *redis.Client
-	asynqClient *asynq.Client
-	inspector   *asynq.Inspector
-	baseURL     string
+	server        *httptest.Server
+	mockWebhook   *mockWebhookServer
+	pool          *pgxpool.Pool
+	redisClient   *redis.Client
+	asynqClient   *asynq.Client
+	inspector     *asynq.Inspector
+	processor     *worker.NotificationProcessor
+	repo          *storage.PostgresRepository
+	batchURL      string
+	notificationURL string
+	batchesURL    string
 }
 
-func (s *BatchTestSuite) SetupSuite() {
+type mockWebhookServer struct {
+	server   *httptest.Server
+	mu       sync.RWMutex
+	statusCode int
+	body       string
+}
+
+func (m *mockWebhookServer) SetResponse(code int, body string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.statusCode = code
+	m.body = body
+}
+
+func (m *mockWebhookServer) GetResponse() (int, string) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.statusCode, m.body
+}
+
+func (m *mockWebhookServer) URL() string {
+	return m.server.URL
+}
+
+func newMockWebhookServer() *mockWebhookServer {
+	m := &mockWebhookServer{statusCode: http.StatusOK, body: `{"status":"delivered"}`}
+	m.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/__config" {
+			if r.Method == http.MethodPost {
+				var cfg struct {
+					StatusCode int    `json:"status_code"`
+					Body        string `json:"body"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				m.SetResponse(cfg.StatusCode, cfg.Body)
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			code, body := m.GetResponse()
+			json.NewEncoder(w).Encode(map[string]interface{}{"status_code": code, "body": body})
+			return
+		}
+		code, body := m.GetResponse()
+		w.WriteHeader(code)
+		if body != "" {
+			w.Write([]byte(body))
+		} else {
+			w.Write([]byte(http.StatusText(code)))
+		}
+	}))
+	return m
+}
+
+func (s *IntegrationSuite) SetupSuite() {
 	cfg, err := config.Load()
 	s.Require().NoError(err)
 
@@ -46,6 +111,7 @@ func (s *BatchTestSuite) SetupSuite() {
 	pool, err := pgxpool.New(ctx, cfg.DSN())
 	s.Require().NoError(err)
 	s.pool = pool
+	suitePool = pool
 
 	redisClient := redis.NewClient(&redis.Options{
 		Addr: fmt.Sprintf("%s:%d", cfg.RedisHost, cfg.RedisPort),
@@ -53,14 +119,22 @@ func (s *BatchTestSuite) SetupSuite() {
 	s.Require().NoError(redisClient.Ping(ctx).Err())
 	s.redisClient = redisClient
 
-	repo := storage.NewPostgresRepository(pool)
+	s.mockWebhook = newMockWebhookServer()
+
+	s.repo = storage.NewPostgresRepository(pool)
 	idempotencySvc := redisSvc.NewIdempotencyService(redisClient)
-	asynqClient := producer.NewClient(cfg)
-	s.asynqClient = asynqClient
-	prod := producer.NewProducer(asynqClient)
-	batchSvc := service.NewBatchService(repo, prod)
-	batchHandler := batch.NewHandler(batchSvc)
+	s.asynqClient = producer.NewClient(cfg)
+	prod := producer.NewProducer(s.asynqClient)
+	batchSvc := service.NewBatchService(s.repo, prod)
+	notificationSvc := service.NewNotificationService(s.repo)
+
+	webhookClient := delivery.NewWebhookClient(s.mockWebhook.URL())
+	s.processor = worker.NewNotificationProcessor(s.repo, webhookClient)
+
+	batchHandler := batch.NewHandler(batchSvc, notificationSvc)
+	notificationHandler := notificationAdapter.NewHandler(notificationSvc)
 	idempotencyMW := middleware.NewIdempotency(idempotencySvc)
+	correlationMW := middleware.NewCorrelation()
 
 	inspector := asynq.NewInspector(asynq.RedisClientOpt{
 		Addr: fmt.Sprintf("%s:%d", cfg.RedisHost, cfg.RedisPort),
@@ -68,23 +142,29 @@ func (s *BatchTestSuite) SetupSuite() {
 	s.inspector = inspector
 
 	r := chi.NewRouter()
+	r.Use(correlationMW.Handler)
 	r.Route("/api/v1", func(r chi.Router) {
-		r.With(idempotencyMW.Handle).Mount("/notifications/batches", batchHandler.Routes())
+		r.With(idempotencyMW.Handle).Post("/notifications/batches", batchHandler.CreateBatch)
+		r.Get("/batches/{batchId}", batchHandler.GetBatch)
+		r.Mount("/notifications", notificationHandler.Routes())
 	})
 
 	s.server = httptest.NewServer(r)
-	s.baseURL = s.server.URL + "/api/v1/notifications/batches"
+	s.batchURL = s.server.URL + "/api/v1/notifications/batches"
+	s.notificationURL = s.server.URL + "/api/v1/notifications"
+	s.batchesURL = s.server.URL + "/api/v1/batches"
 }
 
-func (s *BatchTestSuite) TearDownSuite() {
+func (s *IntegrationSuite) TearDownSuite() {
 	s.server.Close()
+	s.mockWebhook.server.Close()
 	s.pool.Close()
 	s.redisClient.Close()
 	s.asynqClient.Close()
 	s.inspector.Close()
 }
 
-func (s *BatchTestSuite) SetupTest() {
+func (s *IntegrationSuite) SetupTest() {
 	_, err := s.pool.Exec(context.Background(), "TRUNCATE notifications, batches CASCADE")
 	s.Require().NoError(err)
 
@@ -98,16 +178,18 @@ func (s *BatchTestSuite) SetupTest() {
 	for _, queue := range []string{"default", "critical", "low"} {
 		_, _ = s.inspector.DeleteAllPendingTasks(queue)
 	}
+
+	s.mockWebhook.SetResponse(http.StatusOK, `{"status":"delivered"}`)
 }
 
-func (s *BatchTestSuite) post(key string, body interface{}) *http.Response {
+func (s *IntegrationSuite) post(url string, key string, body interface{}) *http.Response {
 	var buf bytes.Buffer
 	if body != nil {
 		err := json.NewEncoder(&buf).Encode(body)
 		s.Require().NoError(err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, s.baseURL, &buf)
+	req, err := http.NewRequest(http.MethodPost, url, &buf)
 	s.Require().NoError(err)
 	req.Header.Set("Content-Type", "application/json")
 	if key != "" {
@@ -119,7 +201,23 @@ func (s *BatchTestSuite) post(key string, body interface{}) *http.Response {
 	return resp
 }
 
-func (s *BatchTestSuite) decodeJSON(resp *http.Response) map[string]interface{} {
+func (s *IntegrationSuite) get(url string) *http.Response {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	s.Require().NoError(err)
+	resp, err := http.DefaultClient.Do(req)
+	s.Require().NoError(err)
+	return resp
+}
+
+func (s *IntegrationSuite) cancel(url string) *http.Response {
+	req, err := http.NewRequest(http.MethodPost, url, nil)
+	s.Require().NoError(err)
+	resp, err := http.DefaultClient.Do(req)
+	s.Require().NoError(err)
+	return resp
+}
+
+func (s *IntegrationSuite) decodeJSON(resp *http.Response) map[string]interface{} {
 	defer resp.Body.Close()
 	var result map[string]interface{}
 	err := json.NewDecoder(resp.Body).Decode(&result)
@@ -127,7 +225,33 @@ func (s *BatchTestSuite) decodeJSON(resp *http.Response) map[string]interface{} 
 	return result
 }
 
-func (s *BatchTestSuite) pendingTasks(queue string) []*asynq.TaskInfo {
+func (s *IntegrationSuite) decodeJSONArray(resp *http.Response) []map[string]interface{} {
+	defer resp.Body.Close()
+	var result struct {
+		Data []map[string]interface{} `json:"data"`
+		Meta struct {
+			Total float64 `json:"total"`
+			Page  float64 `json:"page"`
+			Limit float64 `json:"limit"`
+		} `json:"meta"`
+	}
+	err := json.NewDecoder(resp.Body).Decode(&result)
+	s.Require().NoError(err)
+	return result.Data
+}
+
+func (s *IntegrationSuite) decodeJSONWithMeta(resp *http.Response) ([]map[string]interface{}, map[string]interface{}) {
+	defer resp.Body.Close()
+	var result struct {
+		Data []map[string]interface{} `json:"data"`
+		Meta map[string]interface{}    `json:"meta"`
+	}
+	err := json.NewDecoder(resp.Body).Decode(&result)
+	s.Require().NoError(err)
+	return result.Data, result.Meta
+}
+
+func (s *IntegrationSuite) pendingTasks(queue string) []*asynq.TaskInfo {
 	tasks, err := s.inspector.ListPendingTasks(queue)
 	if err != nil {
 		if err == asynq.ErrQueueNotFound || err.Error() == "asynq: queue not found" {
@@ -138,401 +262,80 @@ func (s *BatchTestSuite) pendingTasks(queue string) []*asynq.TaskInfo {
 	return tasks
 }
 
-func (s *BatchTestSuite) TestSuccess() {
-	key := newUUID()
-	payload := map[string]interface{}{
-		"notifications": []map[string]string{
-			{"recipient": "+905551234567", "channel": "sms", "content": "Hello"},
-			{"recipient": "user@example.com", "channel": "email", "content": "World", "priority": "high"},
-		},
-	}
-
-	resp := s.post(key, payload)
-	defer resp.Body.Close()
-
-	s.Equal(http.StatusAccepted, resp.StatusCode)
-	result := s.decodeJSON(resp)
-	s.NotEmpty(result["batch_id"])
-	s.Equal("accepted", result["status"])
-	s.Equal(float64(2), result["total_count"])
-	s.NotEmpty(result["accepted_at"])
+func (s *IntegrationSuite) drainQueue(queue string) []*asynq.TaskInfo {
+	tasks := s.pendingTasks(queue)
+	_, _ = s.inspector.DeleteAllPendingTasks(queue)
+	return tasks
 }
 
-func (s *BatchTestSuite) TestMissingIdempotencyKey() {
-	payload := map[string]interface{}{
-		"notifications": []map[string]string{
-			{"recipient": "+905551234567", "channel": "sms", "content": "Hello"},
-		},
+func (s *IntegrationSuite) drainAllQueues() {
+	for _, queue := range []string{"default", "critical", "low"} {
+		s.drainQueue(queue)
 	}
-
-	resp := s.post("", payload)
-	defer resp.Body.Close()
-
-	s.Equal(http.StatusBadRequest, resp.StatusCode)
-	result := s.decodeJSON(resp)
-	s.Contains(result["error"], "Idempotency-Key")
 }
 
-func (s *BatchTestSuite) TestInvalidIdempotencyKey() {
-	payload := map[string]interface{}{
-		"notifications": []map[string]string{
-			{"recipient": "+905551234567", "channel": "sms", "content": "Hello"},
-		},
-	}
-
-	resp := s.post("not-a-uuid", payload)
-	defer resp.Body.Close()
-
-	s.Equal(http.StatusBadRequest, resp.StatusCode)
+func (s *IntegrationSuite) processTask(taskType string, notificationID uuid.UUID) error {
+	payload, err := json.Marshal(worker.NotificationPayload{NotificationID: notificationID})
+	s.Require().NoError(err)
+	task := asynq.NewTask(taskType, payload)
+	return s.processor.ProcessTask(context.Background(), task)
 }
 
-func (s *BatchTestSuite) TestEmptyNotifications() {
-	key := newUUID()
-	payload := map[string]interface{}{
-		"notifications": []map[string]string{},
-	}
-
-	resp := s.post(key, payload)
-	defer resp.Body.Close()
-
-	s.Equal(http.StatusBadRequest, resp.StatusCode)
-}
-
-func (s *BatchTestSuite) TestExceedsMaxNotifications() {
-	key := newUUID()
-	notifications := make([]map[string]string, 1001)
-	for i := range notifications {
-		notifications[i] = map[string]string{
-			"recipient": fmt.Sprintf("user%d@test.com", i),
-			"channel":   "email",
-			"content":  "Test",
-		}
-	}
+func (s *IntegrationSuite) createBatch(key string, notifications []map[string]string) map[string]interface{} {
 	payload := map[string]interface{}{"notifications": notifications}
-
-	resp := s.post(key, payload)
+	resp := s.post(s.batchURL, key, payload)
 	defer resp.Body.Close()
-
-	s.Equal(http.StatusBadRequest, resp.StatusCode)
+	s.Equal(http.StatusAccepted, resp.StatusCode)
+	return s.decodeJSON(resp)
 }
 
-func (s *BatchTestSuite) TestInvalidChannel() {
-	key := newUUID()
-	payload := map[string]interface{}{
-		"notifications": []map[string]string{
-			{"recipient": "+905551234567", "channel": "fax", "content": "Hello"},
-		},
-	}
-
-	resp := s.post(key, payload)
-	defer resp.Body.Close()
-
-	s.Equal(http.StatusBadRequest, resp.StatusCode)
-	result := s.decodeJSON(resp)
-	s.Contains(result["error"], "invalid channel")
-}
-
-func (s *BatchTestSuite) TestInvalidPriority() {
-	key := newUUID()
-	payload := map[string]interface{}{
-		"notifications": []map[string]string{
-			{"recipient": "+905551234567", "channel": "sms", "content": "Hello", "priority": "urgent"},
-		},
-	}
-
-	resp := s.post(key, payload)
-	defer resp.Body.Close()
-
-	s.Equal(http.StatusBadRequest, resp.StatusCode)
-	result := s.decodeJSON(resp)
-	s.Contains(result["error"], "invalid priority")
-}
-
-func (s *BatchTestSuite) TestMissingRequiredFields() {
-	key := newUUID()
-	payload := map[string]interface{}{
-		"notifications": []map[string]string{
-			{"channel": "sms", "content": "Hello"},
-		},
-	}
-
-	resp := s.post(key, payload)
-	defer resp.Body.Close()
-
-	s.Equal(http.StatusBadRequest, resp.StatusCode)
-	result := s.decodeJSON(resp)
-	s.Contains(result["error"], "required")
-}
-
-func (s *BatchTestSuite) TestDuplicateIdempotencyKey_ReturnsCachedResponse() {
-	key := newUUID()
-	payload := map[string]interface{}{
-		"notifications": []map[string]string{
-			{"recipient": "+905551234567", "channel": "sms", "content": "Hello"},
-		},
-	}
-
-	resp1 := s.post(key, payload)
-	defer resp1.Body.Close()
-	s.Equal(http.StatusAccepted, resp1.StatusCode)
-	result1 := s.decodeJSON(resp1)
-	batchID := result1["batch_id"]
-
-	resp2 := s.post(key, payload)
-	defer resp2.Body.Close()
-	s.Equal(http.StatusAccepted, resp2.StatusCode)
-	result2 := s.decodeJSON(resp2)
-	s.Equal(batchID, result2["batch_id"])
-	s.Equal("accepted", result2["status"])
-}
-
-func (s *BatchTestSuite) TestProcessingStatus() {
-	key := newUUID()
-
-	err := s.redisClient.Set(context.Background(), "idempotency:"+key, "processing", 0).Err()
+func (s *IntegrationSuite) getNotificationIDs(batchID string) []string {
+	rows, err := s.pool.Query(context.Background(),
+		"SELECT id FROM notifications WHERE batch_id = $1 ORDER BY created_at", batchID)
 	s.Require().NoError(err)
-
-	payload := map[string]interface{}{
-		"notifications": []map[string]string{
-			{"recipient": "+905551234567", "channel": "sms", "content": "Hello"},
-		},
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		s.Require().NoError(rows.Scan(&id))
+		ids = append(ids, id)
 	}
-
-	resp := s.post(key, payload)
-	defer resp.Body.Close()
-
-	s.Equal(http.StatusAccepted, resp.StatusCode)
-	result := s.decodeJSON(resp)
-	s.Equal("processing", result["status"])
+	return ids
 }
 
-func (s *BatchTestSuite) TestErrorReleasesIdempotencyKey() {
-	key := newUUID()
-
-	badPayload := map[string]interface{}{
-		"notifications": []map[string]string{
-			{"recipient": "+905551234567", "channel": "fax", "content": "Hello"},
-		},
-	}
-
-	resp := s.post(key, badPayload)
-	defer resp.Body.Close()
-	s.Equal(http.StatusBadRequest, resp.StatusCode)
-
-	validPayload := map[string]interface{}{
-		"notifications": []map[string]string{
-			{"recipient": "+905551234567", "channel": "sms", "content": "Hello"},
-		},
-	}
-
-	resp2 := s.post(key, validPayload)
-	defer resp2.Body.Close()
-	s.Equal(http.StatusAccepted, resp2.StatusCode)
-}
-
-func (s *BatchTestSuite) TestDefaultPriorityIsNormal() {
-	key := newUUID()
-	payload := map[string]interface{}{
-		"notifications": []map[string]string{
-			{"recipient": "+905551234567", "channel": "sms", "content": "Hello"},
-		},
-	}
-
-	resp := s.post(key, payload)
-	defer resp.Body.Close()
-	s.Equal(http.StatusAccepted, resp.StatusCode)
-
-	var priority string
+func (s *IntegrationSuite) getNotificationStatus(id string) string {
+	var status string
 	err := s.pool.QueryRow(context.Background(),
-		"SELECT priority FROM notifications LIMIT 1",
-	).Scan(&priority)
+		"SELECT status FROM notifications WHERE id = $1", id).Scan(&status)
 	s.Require().NoError(err)
-	s.Equal("normal", priority)
+	return status
 }
 
-func (s *BatchTestSuite) TestEnqueue_SmsTaskInDefaultQueue() {
-	key := newUUID()
-	payload := map[string]interface{}{
-		"notifications": []map[string]string{
-			{"recipient": "+905551234567", "channel": "sms", "content": "Hello"},
-		},
-	}
-
-	resp := s.post(key, payload)
+func (s *IntegrationSuite) readBody(resp *http.Response) []byte {
 	defer resp.Body.Close()
-	s.Equal(http.StatusAccepted, resp.StatusCode)
-
-	tasks := s.pendingTasks("default")
-	s.Len(tasks, 1)
-	s.Equal(worker.TaskDeliverySMS, tasks[0].Type)
-
-	var p worker.NotificationPayload
-	s.Require().NoError(json.Unmarshal(tasks[0].Payload, &p))
-	s.NotEmpty(p.NotificationID)
-}
-
-func (s *BatchTestSuite) TestEnqueue_EmailTaskInDefaultQueue() {
-	key := newUUID()
-	payload := map[string]interface{}{
-		"notifications": []map[string]string{
-			{"recipient": "user@example.com", "channel": "email", "content": "Hello"},
-		},
-	}
-
-	resp := s.post(key, payload)
-	defer resp.Body.Close()
-	s.Equal(http.StatusAccepted, resp.StatusCode)
-
-	tasks := s.pendingTasks("default")
-	s.Len(tasks, 1)
-	s.Equal(worker.TaskDeliveryEmail, tasks[0].Type)
-}
-
-func (s *BatchTestSuite) TestEnqueue_PushTaskInDefaultQueue() {
-	key := newUUID()
-	payload := map[string]interface{}{
-		"notifications": []map[string]string{
-			{"recipient": "device123", "channel": "push", "content": "Hello"},
-		},
-	}
-
-	resp := s.post(key, payload)
-	defer resp.Body.Close()
-	s.Equal(http.StatusAccepted, resp.StatusCode)
-
-	tasks := s.pendingTasks("default")
-	s.Len(tasks, 1)
-	s.Equal(worker.TaskDeliveryPush, tasks[0].Type)
-}
-
-func (s *BatchTestSuite) TestEnqueue_HighPriorityInCriticalQueue() {
-	key := newUUID()
-	payload := map[string]interface{}{
-		"notifications": []map[string]string{
-			{"recipient": "+905551234567", "channel": "sms", "content": "Urgent", "priority": "high"},
-		},
-	}
-
-	resp := s.post(key, payload)
-	defer resp.Body.Close()
-	s.Equal(http.StatusAccepted, resp.StatusCode)
-
-	critical := s.pendingTasks("critical")
-	s.Len(critical, 1)
-	s.Equal(worker.TaskDeliverySMS, critical[0].Type)
-}
-
-func (s *BatchTestSuite) TestEnqueue_LowPriorityInLowQueue() {
-	key := newUUID()
-	payload := map[string]interface{}{
-		"notifications": []map[string]string{
-			{"recipient": "+905551234567", "channel": "sms", "content": "Low prio", "priority": "low"},
-		},
-	}
-
-	resp := s.post(key, payload)
-	defer resp.Body.Close()
-	s.Equal(http.StatusAccepted, resp.StatusCode)
-
-	lowTasks := s.pendingTasks("low")
-	s.Len(lowTasks, 1)
-	s.Equal(worker.TaskDeliverySMS, lowTasks[0].Type)
-}
-
-func (s *BatchTestSuite) TestEnqueue_NotificationPayloadContainsID() {
-	key := newUUID()
-	payload := map[string]interface{}{
-		"notifications": []map[string]string{
-			{"recipient": "+905551234567", "channel": "sms", "content": "Hello"},
-		},
-	}
-
-	resp := s.post(key, payload)
-	defer resp.Body.Close()
-	s.Equal(http.StatusAccepted, resp.StatusCode)
-
-	var notificationID string
-	err := s.pool.QueryRow(context.Background(),
-		"SELECT id FROM notifications LIMIT 1",
-	).Scan(&notificationID)
+	b, err := io.ReadAll(resp.Body)
 	s.Require().NoError(err)
-
-	tasks := s.pendingTasks("default")
-	s.Len(tasks, 1)
-
-	var p worker.NotificationPayload
-	s.Require().NoError(json.Unmarshal(tasks[0].Payload, &p))
-	s.Equal(notificationID, p.NotificationID.String())
-}
-
-func (s *BatchTestSuite) TestEnqueue_MultipleNotificationsMultipleQueues() {
-	key := newUUID()
-	payload := map[string]interface{}{
-		"notifications": []map[string]string{
-			{"recipient": "+905551234567", "channel": "sms", "content": "Urgent", "priority": "high"},
-			{"recipient": "user@example.com", "channel": "email", "content": "Normal"},
-			{"recipient": "device123", "channel": "push", "content": "Low prio", "priority": "low"},
-		},
-	}
-
-	resp := s.post(key, payload)
-	defer resp.Body.Close()
-	s.Equal(http.StatusAccepted, resp.StatusCode)
-
-	critical := s.pendingTasks("critical")
-	s.Len(critical, 1)
-	s.Equal(worker.TaskDeliverySMS, critical[0].Type)
-
-	defaultTasks := s.pendingTasks("default")
-	s.Len(defaultTasks, 1)
-	s.Equal(worker.TaskDeliveryEmail, defaultTasks[0].Type)
-
-	lowTasks := s.pendingTasks("low")
-	s.Len(lowTasks, 1)
-	s.Equal(worker.TaskDeliveryPush, lowTasks[0].Type)
-}
-
-func TestIntegration(t *testing.T) {
-	s := &BatchTestSuite{}
-
-	s.SetT(t)
-	s.SetupSuite()
-	defer s.TearDownSuite()
-
-	cases := []struct {
-		name string
-		fn   func(*BatchTestSuite)
-	}{
-		{"Success", (*BatchTestSuite).TestSuccess},
-		{"MissingIdempotencyKey", (*BatchTestSuite).TestMissingIdempotencyKey},
-		{"InvalidIdempotencyKey", (*BatchTestSuite).TestInvalidIdempotencyKey},
-		{"EmptyNotifications", (*BatchTestSuite).TestEmptyNotifications},
-		{"ExceedsMaxNotifications", (*BatchTestSuite).TestExceedsMaxNotifications},
-		{"InvalidChannel", (*BatchTestSuite).TestInvalidChannel},
-		{"InvalidPriority", (*BatchTestSuite).TestInvalidPriority},
-		{"MissingRequiredFields", (*BatchTestSuite).TestMissingRequiredFields},
-		{"DuplicateIdempotencyKey_ReturnsCachedResponse", (*BatchTestSuite).TestDuplicateIdempotencyKey_ReturnsCachedResponse},
-		{"ProcessingStatus", (*BatchTestSuite).TestProcessingStatus},
-		{"ErrorReleasesIdempotencyKey", (*BatchTestSuite).TestErrorReleasesIdempotencyKey},
-		{"DefaultPriorityIsNormal", (*BatchTestSuite).TestDefaultPriorityIsNormal},
-		{"Enqueue_SmsTaskInDefaultQueue", (*BatchTestSuite).TestEnqueue_SmsTaskInDefaultQueue},
-		{"Enqueue_EmailTaskInDefaultQueue", (*BatchTestSuite).TestEnqueue_EmailTaskInDefaultQueue},
-		{"Enqueue_PushTaskInDefaultQueue", (*BatchTestSuite).TestEnqueue_PushTaskInDefaultQueue},
-		{"Enqueue_HighPriorityInCriticalQueue", (*BatchTestSuite).TestEnqueue_HighPriorityInCriticalQueue},
-		{"Enqueue_LowPriorityInLowQueue", (*BatchTestSuite).TestEnqueue_LowPriorityInLowQueue},
-		{"Enqueue_NotificationPayloadContainsID", (*BatchTestSuite).TestEnqueue_NotificationPayloadContainsID},
-		{"Enqueue_MultipleNotificationsMultipleQueues", (*BatchTestSuite).TestEnqueue_MultipleNotificationsMultipleQueues},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			s.SetT(t)
-			s.SetupTest()
-			tc.fn(s)
-		})
-	}
+	return b
 }
 
 func newUUID() string {
 	return uuid.New().String()
+}
+
+func ctx() context.Context {
+	return context.Background()
+}
+
+func queryRow(c context.Context, query string, dest ...interface{}) error {
+	return suitePool.QueryRow(c, query).Scan(dest...)
+}
+
+var suitePool *pgxpool.Pool
+
+func jsonUnmarshal(data []byte, v interface{}) error {
+	return json.Unmarshal(data, v)
+}
+
+func TestIntegrationSuite(t *testing.T) {
+	suite.Run(t, new(IntegrationSuite))
 }
